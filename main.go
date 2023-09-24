@@ -1,10 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"github.com/hiddeco/sshsig"
 	"github.com/urfave/cli/v2"
+	"golang.org/x/crypto/ssh"
 	"io"
 	"log"
 	"os"
@@ -469,6 +472,114 @@ func main() {
 							}
 							log.Println("not renewing cert")
 							return nil
+						},
+					},
+					{
+						Name: "self-revocation",
+						Subcommands: []*cli.Command{
+							{
+								Name: "create",
+								Flags: []cli.Flag{
+									&cli.PathFlag{
+										Name:    "key",
+										Aliases: []string{"k"},
+										Usage:   "path to key to revoke itself",
+										Value:   path.Join(homeDir, ".ssh", "id_ed25519"),
+									},
+									&cli.BoolFlag{
+										Name:  "stdin",
+										Usage: "read key from stdin instead of file",
+									},
+								},
+								Usage: "revoke a ssh key by signing it's own revocation",
+								Action: func(c *cli.Context) error {
+									var keyBytes []byte
+									if c.Bool("stdin") {
+										keyBytes, err = io.ReadAll(os.Stdin)
+										if err != nil {
+											return fmt.Errorf("failed to read key: %w", err)
+										}
+									} else {
+										keyBytes, err = os.ReadFile(c.Path("key"))
+										if err != nil {
+											return fmt.Errorf("failed to read key: %w", err)
+										}
+									}
+									key, err := ssh.ParsePrivateKey(keyBytes)
+									if err != nil {
+										return fmt.Errorf("failed to parse key: %w", err)
+									}
+
+									//fmt.Println(string(ssh.MarshalAuthorizedKey(key.PublicKey())))
+
+									pubKeyString := ssh.MarshalAuthorizedKey(key.PublicKey())
+									signature, err := sshsig.Sign(
+										bytes.NewReader(pubKeyString[:len(pubKeyString)-1]),
+										key,
+										sshsig.HashSHA512,
+										"ssh-revocation")
+									if err != nil {
+										return fmt.Errorf("failed to sign key: %w", err)
+									}
+
+									fmt.Print(string(pubKeyString))
+									fmt.Print(string(sshsig.Armor(signature)))
+									return nil
+								},
+							},
+							{
+								Name: "verify",
+								Flags: []cli.Flag{
+									&cli.PathFlag{
+										Name:    "key",
+										Aliases: []string{"k"},
+										Usage:   "path to key to validate revocation",
+									},
+									&cli.BoolFlag{
+										Name:  "stdin",
+										Usage: "read key from stdin instead of file",
+									},
+									&cli.BoolFlag{
+										Name:    "quiet",
+										Aliases: []string{"q"},
+									},
+								},
+								Usage: "validate a self-signed ssh key revocation",
+								Action: func(c *cli.Context) error {
+									var signatureBytes []byte
+									if c.Bool("stdin") {
+										signatureBytes, err = io.ReadAll(os.Stdin)
+										if err != nil {
+											return fmt.Errorf("failed to read key: %w", err)
+										}
+									} else {
+										signatureBytes, err = os.ReadFile(c.Path("key"))
+										if err != nil {
+											return fmt.Errorf("failed to read key: %w", err)
+										}
+									}
+									parts := strings.Split(string(signatureBytes), "\n")
+									pubKeyString := parts[0]
+									pubKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(pubKeyString))
+									signature, err := sshsig.Unarmor([]byte(strings.Join(parts[1:], "\n")))
+									if err != nil {
+										return err
+									}
+									err = sshsig.Verify(
+										bytes.NewReader([]byte(pubKeyString)),
+										signature,
+										pubKey,
+										sshsig.HashSHA512,
+										"ssh-revocation")
+									if err != nil {
+										return err
+									}
+									if !c.Bool("quiet") {
+										fmt.Printf("key revocation for %s is valid\n", pubKeyString)
+									}
+									return nil
+								},
+							},
 						},
 					},
 				},

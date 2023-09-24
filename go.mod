@@ -4,6 +4,7 @@ go 1.21.1
 
 require (
 	github.com/go-piv/piv-go v1.11.0
+	github.com/hiddeco/sshsig v0.1.0
 	github.com/multiformats/go-multiaddr v0.11.0
 	github.com/pkg/sftp v1.13.6
 	github.com/skeema/knownhosts v1.2.1
