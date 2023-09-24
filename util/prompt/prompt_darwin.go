@@ -4,7 +4,7 @@
 // license that can be found in the LICENSE file or at
 // https://developers.google.com/open-source/licenses/bsd
 
-package main
+package prompt
 
 import (
 	"bytes"
@@ -29,7 +29,7 @@ app.displayDialog(
     hiddenAnswer: true,
 })`))
 
-func getPIN(serial uint32, retries int) (string, error) {
+func GetPIN(serial uint32, retries int) (string, error) {
 	script := new(bytes.Buffer)
 	if err := scriptTemplate.Execute(script, map[string]interface{}{
 		"Serial": serial, "Tries": retries,

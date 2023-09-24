@@ -6,7 +6,7 @@
 
 //go:build !darwin
 
-package main
+package prompt
 
 import (
 	"fmt"
@@ -15,7 +15,7 @@ import (
 	"github.com/twpayne/go-pinentry-minimal/pinentry"
 )
 
-func getPIN(serial uint32, retries int) (string, error) {
+func GetPIN(serial uint32, retries int) (string, error) {
 	client, err := pinentry.NewClient(
 		pinentry.WithBinaryNameFromGnuPGAgentConf(),
 		pinentry.WithGPGTTY(),
