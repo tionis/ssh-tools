@@ -12,6 +12,7 @@ import (
 	"strings"
 	"tasadar.net/tionis/ssh-tools/certs"
 	"tasadar.net/tionis/ssh-tools/manage"
+	sigchainLib "tasadar.net/tionis/ssh-tools/sigchain"
 	"tasadar.net/tionis/ssh-tools/util/sftp_handler"
 	"time"
 )
@@ -27,90 +28,40 @@ import (
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	var fishCompletion string
-	var signingConf certs.SigningConfig
-	var changes certs.ChangeRequest
-
+	var sigchain *sigchainLib.Sigchain
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Println("failed to get home dir: ", err)
 		return
 	}
-	var userManager *manage.UserCertManager
-	var caManager *manage.CACertManager
 
 	app := &cli.App{
+		EnableBashCompletion: true,
+		Flags: []cli.Flag{
+			&cli.PathFlag{
+				Name:      "sigchain",
+				Aliases:   []string{"s"},
+				Usage:     "sigchain file to use",
+				Value:     path.Join(homeDir, ".ssh", "sigchain"),
+				TakesFile: true,
+			},
+			&cli.StringFlag{
+				Name: "trust",
+				Usage: "hash of sigchain node to use as trust anchor\n" +
+					"if this is empty the sigchain file is trusted as is",
+			},
+		},
 		Commands: []*cli.Command{
 			{
 				Name:    "cert",
 				Aliases: []string{"c"},
-				Flags: []cli.Flag{
-					&cli.BoolFlag{
-						Name:    "ignore-expiry",
-						Aliases: []string{"i"},
-						Usage:   "ignore expiry date of certificate",
-					},
-					&cli.DurationFlag{
-						Name:    "clock-compensation",
-						Aliases: []string{"cc"},
-						Usage:   "how much time to add/substract to compensate for clock inaccuracies",
-						Value:   3 * time.Minute,
-					},
-					&cli.StringFlag{
-						Name:    "time",
-						Aliases: []string{"t"},
-						Usage:   "override validity time with pattern (like used by ssh-keygen)",
-					},
-					&cli.StringSliceFlag{
-						Name:    "principal-add",
-						Aliases: []string{"pa"},
-						Usage:   "principals to add to cert",
-					},
-					&cli.StringSliceFlag{
-						Name:    "principal-rm",
-						Aliases: []string{"pr"},
-						Usage:   "principals to remove from cert",
-					},
-					&cli.StringSliceFlag{
-						Name:    "principal",
-						Aliases: []string{"p"},
-						Usage:   "principals to override to cert",
-					},
-					&cli.StringFlag{
-						Name:    "identifier",
-						Aliases: []string{"I"},
-						Usage:   "override identifier to use",
-					},
-					&cli.TimestampFlag{
-						Name:    "valid-after",
-						Aliases: []string{"va"},
-						Usage:   "override valid after date",
-						Layout:  "2006-01-02 15:04:05",
-					},
-					&cli.TimestampFlag{
-						Name:    "valid-before",
-						Aliases: []string{"vb"},
-						Usage:   "override valid before date",
-						Layout:  "2006-01-02 15:04:05",
-					},
-				},
-				Before: func(c *cli.Context) error {
-					userManager = manage.NewUserManager(homeDir)
-					signingConf, err = certs.CreateSigningConf(
-						c.Duration("clock-compensation"),
-						c.Bool("ignore-expiry"))
-					if err != nil {
-						return fmt.Errorf("failed to get signing conf: %w", err)
-					}
-					changes = cliFlagsToChangeRequest(c)
-					return nil
-				},
-				Usage: "certificate management",
+				Usage:   "certificate management",
 				Subcommands: []*cli.Command{
 					{
 						Name:    "create",
-						Aliases: []string{"s"},
+						Aliases: []string{"c"},
 						Usage:   "create a cert for a local key",
-						Flags: []cli.Flag{
+						Flags: cliFlagAddChangeRequestAndSigningConfig(
 							&cli.BoolFlag{
 								Name:  "stdin",
 								Usage: "read key from stdin instead of file",
@@ -125,10 +76,15 @@ func main() {
 								Name:  "sftp",
 								Usage: "sign key on remote using sftp",
 							},
-						},
+						),
 						Action: func(c *cli.Context) error {
+							changes := cliFlagsToChangeRequest(c)
+							signingConf, err := cliFlagsToSigningConfig(c)
+							if err != nil {
+								return fmt.Errorf("failed to parse signing config: %w", err)
+							}
 							cert := certs.DefaultUserCert()
-							err := cert.ApplyChanges(changes)
+							err = cert.ApplyChanges(changes)
 							if err != nil {
 								return fmt.Errorf("failed to apply changes: %w", err)
 							}
@@ -223,7 +179,7 @@ func main() {
 						Name:    "renew",
 						Aliases: []string{"r"},
 						Usage:   "renew a certificate from stdin or file",
-						Flags: []cli.Flag{
+						Flags: cliFlagAddChangeRequestAndSigningConfig(
 							&cli.BoolFlag{
 								Name:  "stdin",
 								Usage: "read cert from stdin instead of file",
@@ -238,8 +194,13 @@ func main() {
 								Usage:   "path to cert to renew",
 								Value:   path.Join(homeDir, ".ssh", "id_ed25519-cert.pub"),
 							},
-						},
+						),
 						Action: func(c *cli.Context) error {
+							changes := cliFlagsToChangeRequest(c)
+							signingConf, err := cliFlagsToSigningConfig(c)
+							if err != nil {
+								return fmt.Errorf("failed to parse signing config: %w", err)
+							}
 							var certBytes []byte
 							var writer io.Writer
 							var closer func() error
@@ -339,17 +300,141 @@ func main() {
 								Usage:   "path to cert to check",
 								Value:   path.Join(homeDir, ".ssh", "id_ed25519-cert.pub"),
 							},
+							&cli.BoolFlag{
+								Name:  "stdin",
+								Usage: "read cert from stdin instead of file",
+							},
+							&cli.StringFlag{
+								Name:  "sftp",
+								Usage: "read cert from remote using sftp",
+							},
 						},
 						Action: func(c *cli.Context) error {
-							cert, err := certs.FromFile(c.Path("cert"))
+							signingConf, err := cliFlagsToSigningConfig(c)
 							if err != nil {
-								return fmt.Errorf("failed to read cert from file: %w", err)
+								return fmt.Errorf("failed to parse signing config: %w", err)
+							}
+							var cert *certs.Cert
+							if c.Bool("stdin") {
+								cert, err = certs.FromStdin()
+								if err != nil {
+									return fmt.Errorf("failed to read cert from stdin: %w", err)
+								}
+							} else {
+								if c.String("sftp") != "" {
+									client, err := sftp_handler.SFTPGetClient(
+										signingConf,
+										homeDir,
+										c.String("sftp"))
+									if err != nil {
+										return fmt.Errorf("failed to get SFTP client for remote: %w", err)
+									}
+									open, err := client.Client.Open(client.Remote.Path)
+									if err != nil {
+										return fmt.Errorf("failed to open cert file: %w", err)
+									}
+									cert, err = certs.FromReader(open)
+									if err != nil {
+										return fmt.Errorf("failed to read cert from file: %w", err)
+									}
+									err = open.Close()
+									if err != nil {
+										return fmt.Errorf("failed to close cert file: %w", err)
+									}
+									err = client.Close()
+									if err != nil {
+										return fmt.Errorf("failed to close sftp client: %w", err)
+									}
+								} else {
+									cert, err = certs.FromFile(c.Path("cert"))
+									if err != nil {
+										return fmt.Errorf("failed to read cert from file: %w", err)
+									}
+								}
 							}
 							indent, err := json.MarshalIndent(cert.Cert, "", "  ")
 							if err != nil {
 								return fmt.Errorf("failed to marshal cert: %w", err)
 							}
 							fmt.Println(string(indent))
+							return nil
+						},
+					},
+					{
+						Name:    "verify",
+						Aliases: []string{"v"},
+						Usage:   "verify a certificate",
+						Flags: []cli.Flag{
+							&cli.PathFlag{
+								Name:    "cert",
+								Aliases: []string{"c"},
+								Usage:   "path to cert to check",
+								Value:   path.Join(homeDir, ".ssh", "id_ed25519-cert.pub"),
+							},
+							&cli.BoolFlag{
+								Name:  "stdin",
+								Usage: "read cert from stdin instead of file",
+							},
+							&cli.StringFlag{
+								Name:  "sftp",
+								Usage: "read cert from remote using sftp",
+							},
+						},
+						Action: func(c *cli.Context) error {
+							var trustAnchor sql.NullString
+							if c.String("trust") != "" {
+								trustAnchor = sql.NullString{
+									String: c.String("trust"),
+									Valid:  true,
+								}
+							}
+							sigchain, err = sigchainLib.New(c.Path("sigchain"), trustAnchor)
+							if err != nil {
+								return fmt.Errorf("failed to create sigchain: %w", err)
+							}
+							var cert *certs.Cert
+							if c.Bool("stdin") {
+								cert, err = certs.FromStdin()
+								if err != nil {
+									return fmt.Errorf("failed to read cert from stdin: %w", err)
+								}
+							} else {
+								if c.String("sftp") != "" {
+									signingConf, err := cliFlagsToSigningConfig(c)
+									if err != nil {
+										return fmt.Errorf("failed to parse signing config: %w", err)
+									}
+									client, err := sftp_handler.SFTPGetClient(
+										signingConf,
+										homeDir,
+										c.String("sftp"))
+									open, err := client.Client.Open(client.Remote.Path)
+									if err != nil {
+										return fmt.Errorf("failed to open cert file: %w", err)
+									}
+									cert, err = certs.FromReader(open)
+									if err != nil {
+										return fmt.Errorf("failed to read cert from file: %w", err)
+									}
+									err = open.Close()
+									if err != nil {
+										return fmt.Errorf("failed to close cert file: %w", err)
+									}
+									err = client.Close()
+									if err != nil {
+										return fmt.Errorf("failed to close sftp client: %w", err)
+									}
+								} else {
+									cert, err = certs.FromFile(c.Path("cert"))
+									if err != nil {
+										return fmt.Errorf("failed to read cert from file: %w", err)
+									}
+								}
+							}
+							err := sigchain.VerifyCert(cert)
+							if err != nil {
+								return fmt.Errorf("failed to verify cert: %w", err)
+							}
 							return nil
 						},
 					},
@@ -366,6 +451,7 @@ func main() {
 						Usage: "automatically request renewal of certificate when it has reached " +
 							"50% of its validity time window",
 						Action: func(c *cli.Context) error {
+							userManager := manage.NewUserManager(homeDir)
 							cert, err := certs.FromFile(c.Path("cert"))
 							if err != nil {
 								return fmt.Errorf("failed to read cert from file: %w", err)
@@ -391,10 +477,6 @@ func main() {
 				Name:    "manage",
 				Aliases: []string{"m"},
 				Usage:   "manage certificates across devices",
-				Before: func(c *cli.Context) error {
-					caManager = manage.NewCAManager(homeDir)
-					return nil
-				},
 				Subcommands: []*cli.Command{
 					{
 						Name:    "process",
@@ -418,6 +500,7 @@ func main() {
 						},
 						Usage: "process certificate signing requests",
 						Action: func(c *cli.Context) error {
+							caManager := manage.NewCAManager(homeDir)
 							return caManager.ProcessRequests(c.Bool("renew"), c.Bool("revoke"), c.Bool("new"))
 						},
 					},
@@ -426,6 +509,7 @@ func main() {
 						Aliases: []string{"u"},
 						Usage:   "update the revocation list",
 						Action: func(c *cli.Context) error {
+							caManager := manage.NewCAManager(homeDir)
 							return caManager.UpdateRevocationList()
 						},
 					},
@@ -454,6 +538,7 @@ func main() {
 									return fmt.Errorf("failed to read cert from stdin: %w", err)
 								}
 							}
+							caManager := manage.NewCAManager(homeDir)
 							return caManager.RevokeCert(cert)
 						},
 					},
@@ -493,6 +578,50 @@ func main() {
 	if err := app.Run(os.Args); err != nil {
 		log.Fatalf("failed to run app: %v", err)
 	}
+}
+
+func cliFlagAddChangeRequestAndSigningConfig(flags ...cli.Flag) []cli.Flag {
+	return append(append(flags, cliFlagsChangeRequest...), cliFlagsSigningConfig...)
+}
+
+var cliFlagsChangeRequest = []cli.Flag{
+	&cli.StringFlag{
+		Name:    "time",
+		Aliases: []string{"t"},
+		Usage:   "override validity time with pattern (like used by ssh-keygen)",
+	},
+	&cli.StringSliceFlag{
+		Name:    "principal-add",
+		Aliases: []string{"pa"},
+		Usage:   "principals to add to cert",
+	},
+	&cli.StringSliceFlag{
+		Name:    "principal-rm",
+		Aliases: []string{"pr"},
+		Usage:   "principals to remove from cert",
+	},
+	&cli.StringSliceFlag{
+		Name:    "principal",
+		Aliases: []string{"p"},
+		Usage:   "principals to override to cert",
+	},
+	&cli.StringFlag{
+		Name:    "identifier",
+		Aliases: []string{"I"},
+		Usage:   "override identifier to use",
+	},
+	&cli.TimestampFlag{ // TODO replace with time pattern
+		Name:    "valid-after",
+		Aliases: []string{"va"},
+		Usage:   "override valid after date",
+		Layout:  "2006-01-02 15:04:05",
+	},
+	&cli.TimestampFlag{ // TODO replace with time pattern
+		Name:    "valid-before",
+		Aliases: []string{"vb"},
+		Usage:   "override valid before date",
+		Layout:  "2006-01-02 15:04:05",
+	},
 }
 
 func cliFlagsToChangeRequest(c *cli.Context) certs.ChangeRequest {
@@ -535,4 +664,24 @@ func cliFlagsToChangeRequest(c *cli.Context) certs.ChangeRequest {
 		ValidBeforeOverride: validBefore,
 		TimePattern:         timePattern,
 	}
+}
+
+var cliFlagsSigningConfig = []cli.Flag{
+	&cli.BoolFlag{
+		Name:    "ignore-expiry",
+		Aliases: []string{"i"},
+		Usage:   "ignore expiry date of certificate",
+	},
+	&cli.DurationFlag{
+		Name:    "clock-compensation",
+		Aliases: []string{"cc"},
+		Usage:   "how much time to add/substract to compensate for clock inaccuracies",
+		Value:   3 * time.Minute,
+	},
+}
+
+func cliFlagsToSigningConfig(c *cli.Context) (certs.SigningConfig, error) {
+	return certs.CreateSigningConf(
+		c.Duration("clock-compensation"),
+		c.Bool("ignore-expiry"))
 }

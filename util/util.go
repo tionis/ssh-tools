@@ -29,6 +29,9 @@ func ShowNotification(message string) {
 }
 
 func ParseTimePattern(patt string) (time.Time, time.Time, error) {
+	// TODO support more patterns
+	// non-relative (like iso8601)
+	// weeks, months, years, etc
 	if strings.Contains(patt, ":") {
 		parts := strings.Split(patt, ":")
 		if len(parts) != 2 {

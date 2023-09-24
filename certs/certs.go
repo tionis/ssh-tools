@@ -55,6 +55,14 @@ func FromStdin() (*Cert, error) {
 	return FromBytes(certBytes)
 }
 
+func FromReader(reader io.Reader) (*Cert, error) {
+	certBytes, err := io.ReadAll(reader)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read cert: %w", err)
+	}
+	return FromBytes(certBytes)
+}
+
 func (c *Cert) Renew(conf SigningConfig, changes ChangeRequest) error {
 	if !conf.IgnoreExpiry && c.Cert.ValidBefore < uint64(time.Now().Unix()) {
 		log.Println("cert is expired")

@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+// TODO handle reconnects etc from yubikey-agent code
+
 type Key struct {
 	mu      sync.Mutex
 	yk      *piv.YubiKey
