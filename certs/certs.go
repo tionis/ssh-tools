@@ -8,6 +8,8 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/user"
+	"reflect"
 	"tasadar.net/tionis/ssh-tools/util"
 	"time"
 )
@@ -128,14 +130,25 @@ func (c *Cert) ApplyChanges(changes ChangeRequest) error {
 }
 
 func DefaultUserCert() *Cert {
+	hostname, err := os.Hostname()
+	if err != nil {
+		hostname = "unknown"
+	}
+	var username string
+	u, err := user.Current()
+	if err != nil {
+		username = "unknown"
+	} else {
+		username = u.Username
+	}
 	return &Cert{Cert: &ssh.Certificate{
 		Key:             nil,
 		Serial:          0,
 		CertType:        ssh.UserCert,
-		KeyId:           "",
-		ValidPrincipals: []string{},
+		KeyId:           hostname + "@tionis.dev",
+		ValidPrincipals: []string{username},
 		ValidAfter:      uint64(time.Now().Unix()),
-		ValidBefore:     uint64(time.Now().Add(1 * time.Minute).Unix()),
+		ValidBefore:     uint64(time.Now().Add(1 * time.Hour).Unix()),
 		Permissions: ssh.Permissions{
 			CriticalOptions: map[string]string{},
 			Extensions: map[string]string{
@@ -214,7 +227,7 @@ func (c *Cert) AttachCertToSigner(signer ssh.Signer) (ssh.Signer, error) {
 	if signer.PublicKey().Type() != c.Cert.Key.Type() {
 		return nil, fmt.Errorf("key types do not match")
 	}
-	if signer.PublicKey() != c.Cert.Key {
+	if !reflect.DeepEqual(signer.PublicKey().Marshal(), c.Cert.Key.Marshal()) {
 		return nil, fmt.Errorf("keys do not match")
 	}
 	return ssh.NewCertSigner(c.Cert, signer)

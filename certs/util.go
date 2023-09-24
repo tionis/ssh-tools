@@ -6,23 +6,24 @@ import (
 	"fmt"
 	"golang.org/x/crypto/ssh"
 	"log"
+	"os"
 	"tasadar.net/tionis/ssh-tools/yubikey"
 	"time"
 )
 
-func GetTemporaryRootKey() (ssh.Signer, error) {
+func GetTemporaryRootKey(signingConf SigningConfig) (ssh.Signer, error) {
 	pubKey, signer, err := GetSSHKeyPair()
 	if err != nil {
 		return nil, err
 	}
-	signingConf, err := CreateSigningConf(time.Minute*3, true)
+	hostname, err := os.Hostname()
 	if err != nil {
-		return nil, fmt.Errorf("failed to get signing conf: %w", err)
+		hostname = "unknown"
 	}
 
 	cert := DefaultUserCert()
-	cert.SetPrincipals([]string{"root", "tionis", "admin", "citadel", "*"}) // TODO follow principal naming convention here
-	cert.SetIdentifier("root@tionis.dev")                                   // TODO embed hostname/machine id here
+	cert.SetPrincipals([]string{"root", "tionis", "admin", "*"})
+	cert.SetIdentifier(hostname + "@tionis.dev")
 	cert.SetValidAfter(time.Now())
 	cert.SetValidBefore(time.Now())
 	cert.SetKey(pubKey)

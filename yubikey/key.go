@@ -16,7 +16,7 @@ import (
 	"time"
 )
 
-type key struct {
+type Key struct {
 	mu      sync.Mutex
 	yk      *piv.YubiKey
 	serial  uint32
@@ -29,7 +29,7 @@ type key struct {
 	touchNotification *time.Timer
 }
 
-func (k *key) GetPIN() (string, error) {
+func (k *Key) GetPIN() (string, error) {
 	if k.touchNotification != nil && k.touchNotification.Stop() {
 		defer k.touchNotification.Reset(5 * time.Second)
 	}
@@ -58,11 +58,11 @@ func GetPublicKey(yk *piv.YubiKey, slot piv.Slot) (ssh.PublicKey, error) {
 	return pk, nil
 }
 
-func (k *key) PublicKey() ssh.PublicKey {
+func (k *Key) PublicKey() ssh.PublicKey {
 	return k.pubKey
 }
 
-func (k *key) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+func (k *Key) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
 	signed, err := k.signer.Sign(rand, data)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -82,7 +82,7 @@ func (k *key) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
 	return signed, err
 }
 
-func New() (*key, error) {
+func New() (*Key, error) {
 	ykRaw, err := openYK()
 	if err != nil {
 		return nil, fmt.Errorf("failed to open YubiKey: %w", err)
@@ -95,7 +95,7 @@ func New() (*key, error) {
 	if err != nil {
 		return nil, err
 	}
-	k := &key{
+	k := &Key{
 		yk:                ykRaw,
 		serial:            serial,
 		pubKey:            pk,

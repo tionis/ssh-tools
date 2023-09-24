@@ -3,10 +3,8 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"github.com/urfave/cli/v2"
-	"golang.org/x/crypto/ssh"
 	"io"
 	"log"
 	"os"
@@ -14,6 +12,7 @@ import (
 	"strings"
 	"tasadar.net/tionis/ssh-tools/certs"
 	"tasadar.net/tionis/ssh-tools/manage"
+	"tasadar.net/tionis/ssh-tools/util/sftp_handler"
 	"time"
 )
 
@@ -34,11 +33,6 @@ func main() {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Println("failed to get home dir: ", err)
-		return
-	}
-	hostName, err := os.Hostname()
-	if err != nil {
-		log.Println("failed to get hostname: ", err)
 		return
 	}
 	var userManager *manage.UserCertManager
@@ -65,31 +59,26 @@ func main() {
 						Name:    "time",
 						Aliases: []string{"t"},
 						Usage:   "override validity time with pattern (like used by ssh-keygen)",
-						Value:   "1h",
 					},
 					&cli.StringSliceFlag{
 						Name:    "principal-add",
 						Aliases: []string{"pa"},
 						Usage:   "principals to add to cert",
-						Value:   cli.NewStringSlice("tionis"),
 					},
 					&cli.StringSliceFlag{
 						Name:    "principal-rm",
 						Aliases: []string{"pr"},
 						Usage:   "principals to remove from cert",
-						Value:   cli.NewStringSlice("tionis"),
 					},
 					&cli.StringSliceFlag{
 						Name:    "principal",
 						Aliases: []string{"p"},
 						Usage:   "principals to override to cert",
-						Value:   cli.NewStringSlice("tionis"),
 					},
 					&cli.StringFlag{
 						Name:    "identifier",
 						Aliases: []string{"I"},
 						Usage:   "override identifier to use",
-						Value:   hostName + "@tionis.dev",
 					},
 					&cli.TimestampFlag{
 						Name:    "valid-after",
@@ -134,7 +123,7 @@ func main() {
 							},
 							&cli.StringFlag{
 								Name:  "sftp",
-								Usage: "sign cert on remote using sftp",
+								Usage: "sign key on remote using sftp",
 							},
 						},
 						Action: func(c *cli.Context) error {
@@ -143,48 +132,89 @@ func main() {
 							if err != nil {
 								return fmt.Errorf("failed to apply changes: %w", err)
 							}
+							var reader io.Reader
+							var writer io.Writer
+							var closer func() error
 
 							if c.Bool("stdin") {
-								keyBytes, err := io.ReadAll(os.Stdin)
-								if err != nil {
-									return fmt.Errorf("failed to read key from stdin: %w", err)
-								}
-								err = cert.SetKeyFromBytes(keyBytes)
-								if err != nil {
-									return fmt.Errorf("failed to set key: %w", err)
-								}
-								err = cert.Sign(signingConf)
-								if err != nil {
-									return fmt.Errorf("failed to sign cert: %w", err)
-								}
-								_, err = os.Stdout.Write(cert.MarshalAuthorizedKey())
-								if err != nil {
-									return fmt.Errorf("failed to write cert to stdout: %w", err)
-								}
+								reader = os.Stdin
+								writer = os.Stdout
+								closer = func() error { return nil }
 							} else {
 								if c.String("sftp") != "" {
-									// TODO sign cert on remote
-									return errors.New("not implemented")
+									sftpClient, err := sftp_handler.SFTPGetClient(
+										signingConf,
+										homeDir,
+										c.String("sftp"))
+									if err != nil {
+										return fmt.Errorf("failed to parse get sftp file: %w", err)
+									}
+									if c.String("identifier") == "" {
+										cert.SetIdentifier(sftpClient.Remote.Host + "@tionis.dev")
+									}
+									keyFile, err := sftpClient.Client.OpenFile(sftpClient.Remote.Path, os.O_RDWR)
+									if err != nil {
+										return err
+									}
+									certFile, err := sftpClient.Client.Create(strings.TrimSuffix(sftpClient.Remote.Path, ".pub") + "-cert.pub")
+									reader = keyFile
+									writer = certFile
+									closer = func() error {
+										err := keyFile.Close()
+										if err != nil {
+											return fmt.Errorf("failed to close key file: %w", err)
+										}
+										err = certFile.Close()
+										if err != nil {
+											return fmt.Errorf("failed to close cert file: %w", err)
+										}
+										return sftpClient.Close()
+									}
 								} else {
-									keyBytes, err := os.ReadFile(c.Path("key"))
+									keyFile, err := os.Open(c.Path("key"))
 									if err != nil {
-										return fmt.Errorf("failed to read key from file: %w", err)
+										return fmt.Errorf("failed to open key file: %w", err)
 									}
-									err = cert.SetKeyFromBytes(keyBytes)
+									certFile, err := os.Create(strings.TrimSuffix(c.Path("key"), ".pub") + "-cert.pub")
 									if err != nil {
-										return fmt.Errorf("failed to set key: %w", err)
+										return fmt.Errorf("failed to create cert file: %w", err)
 									}
-									err = cert.Sign(signingConf)
-									if err != nil {
-										return fmt.Errorf("failed to sign cert: %w", err)
-									}
-									err = os.WriteFile(
-										strings.TrimSuffix(c.Path("key"), ".pub")+"-cert.pub",
-										ssh.MarshalAuthorizedKey(cert.Cert), 0600)
-									if err != nil {
-										return fmt.Errorf("failed to write cert to file: %w", err)
+									reader = keyFile
+									writer = certFile
+									closer = func() error {
+										err := keyFile.Close()
+										if err != nil {
+											return fmt.Errorf("failed to close key file: %w", err)
+										}
+										err = certFile.Close()
+										if err != nil {
+											return fmt.Errorf("failed to close cert file: %w", err)
+										}
+										return nil
 									}
 								}
+							}
+
+							bytes, err := io.ReadAll(reader)
+							if err != nil {
+								return fmt.Errorf("failed to read key: %w", err)
+							}
+							err = cert.SetKeyFromBytes(bytes)
+							if err != nil {
+								return fmt.Errorf("failed to set key: %w", err)
+							}
+							err = cert.Sign(signingConf)
+							if err != nil {
+								return fmt.Errorf("failed to sign cert: %w", err)
+							}
+
+							_, err = writer.Write(cert.MarshalAuthorizedKey())
+							if err != nil {
+								return fmt.Errorf("failed to write cert: %w", err)
+							}
+							closeErr := closer()
+							if closeErr != nil {
+								return fmt.Errorf("failed to close: %w", closeErr)
 							}
 							return nil
 						},
@@ -210,41 +240,90 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
+							var certBytes []byte
+							var writer io.Writer
+							var closer func() error
+
 							if c.Bool("stdin") {
-								cert, err := certs.FromStdin()
+								certBytes, err = io.ReadAll(os.Stdin)
 								if err != nil {
-									return fmt.Errorf("failed to parse cert from stdin: %w", err)
+									return fmt.Errorf("failed to read cert from stdin: %w", err)
 								}
-								err = cert.Renew(signingConf, changes)
-								if err != nil {
-									return fmt.Errorf("failed to renew cert: %w", err)
-								}
-								_, err = os.Stdout.Write(cert.MarshalAuthorizedKey())
-								if err != nil {
-									return fmt.Errorf("failed to write cert to stdout: %w", err)
-								}
+								writer = os.Stdout
+								closer = func() error { return nil }
 							} else {
 								if c.String("sftp") != "" {
-									// TODO read cert from remote
-									return errors.New("not implemented")
-									//util.ParseSFTPRemote(homeDir, c.String("sftp"))
-								} else {
-									cert, err := certs.FromFile(c.Path("cert"))
+									sftpClient, err := sftp_handler.SFTPGetClient(
+										signingConf,
+										homeDir,
+										c.String("sftp"))
+									if err != nil {
+										return fmt.Errorf("failed to parse get sftp file: %w", err)
+									}
+									certFile, err := sftpClient.Client.OpenFile(
+										sftpClient.Remote.Path,
+										os.O_RDWR)
+									certBytes, err = io.ReadAll(certFile)
 									if err != nil {
 										return fmt.Errorf("failed to read cert from file: %w", err)
 									}
-									err = cert.Renew(signingConf, changes)
+									_, err = certFile.Seek(0, io.SeekStart)
 									if err != nil {
-										return fmt.Errorf("failed to renew cert: %w", err)
+										return fmt.Errorf("failed to seek to start of file: %w", err)
 									}
-									err = os.WriteFile(
+									writer = certFile
+									closer = func() error {
+										err = certFile.Close()
+										if err != nil {
+											return fmt.Errorf("failed to close cert file: %w", err)
+										}
+										return sftpClient.Close()
+									}
+								} else {
+									certFile, err := os.OpenFile(
 										c.Path("cert"),
-										cert.MarshalAuthorizedKey(),
-										0600)
+										os.O_RDWR,
+										0644)
 									if err != nil {
-										return fmt.Errorf("failed to write cert to file: %w", err)
+										return fmt.Errorf("failed to create cert file: %w", err)
+									}
+									certBytes, err = io.ReadAll(certFile)
+									if err != nil {
+										return fmt.Errorf("failed to read cert from file: %w", err)
+									}
+									_, err = certFile.Seek(0, io.SeekStart)
+									if err != nil {
+										return fmt.Errorf("failed to seek to start of file: %w", err)
+									}
+									writer = certFile
+									closer = func() error {
+										err = certFile.Close()
+										if err != nil {
+											return fmt.Errorf("failed to close cert file: %w", err)
+										}
+										return nil
 									}
 								}
+							}
+							cert, err := certs.FromBytes(certBytes)
+							if err != nil {
+								return fmt.Errorf("failed to parse cert: %w", err)
+							}
+							err = cert.ApplyChanges(changes)
+							if err != nil {
+								return fmt.Errorf("failed to apply changes: %w", err)
+							}
+							err = cert.Sign(signingConf)
+							if err != nil {
+								return fmt.Errorf("failed to sign cert: %w", err)
+							}
+							_, err = writer.Write(cert.MarshalAuthorizedKey())
+							if err != nil {
+								return fmt.Errorf("failed to write cert: %w", err)
+							}
+							closeErr := closer()
+							if closeErr != nil {
+								return fmt.Errorf("failed to close: %w", closeErr)
 							}
 							return nil
 						},
