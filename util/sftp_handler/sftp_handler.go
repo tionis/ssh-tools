@@ -54,10 +54,10 @@ func ParseSFTPRemote(signingConf certs.SigningConfig, homeDir, remote string) (*
 	sshConfig := ssh.ClientConfig{
 		User:            user,
 		Auth:            []ssh.AuthMethod{ssh.PublicKeys(rootKey)},
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(),
+		HostKeyCallback: knownHostsCallback.HostKeyCallback(),
 		//HostKeyCallback: knownHostsCallback.HostKeyCallback(),
-		HostKeyAlgorithms: knownHostsCallback.HostKeyAlgorithms(
-			net.JoinHostPort(parse.Hostname(), port)),
+		//HostKeyAlgorithms: knownHostsCallback.HostKeyAlgorithms(
+		//	net.JoinHostPort(parse.Hostname(), port)),
 		BannerCallback: ssh.BannerDisplayStderr(),
 	}
 	return &SFTPRemote{

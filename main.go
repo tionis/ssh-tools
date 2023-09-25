@@ -507,7 +507,7 @@ func main() {
 									}
 
 									//fmt.Println(string(ssh.MarshalAuthorizedKey(key.PublicKey())))
-
+									// TODO embed timestamp in signed statement after which the key is invalid
 									pubKeyString := ssh.MarshalAuthorizedKey(key.PublicKey())
 									signature, err := sshsig.Sign(
 										bytes.NewReader(pubKeyString[:len(pubKeyString)-1]),
