@@ -273,11 +273,7 @@ func main() {
 							if err != nil {
 								return fmt.Errorf("failed to parse cert: %w", err)
 							}
-							err = cert.ApplyChanges(changes)
-							if err != nil {
-								return fmt.Errorf("failed to apply changes: %w", err)
-							}
-							err = cert.Sign(signingConf)
+							err = cert.Renew(signingConf, changes)
 							if err != nil {
 								return fmt.Errorf("failed to sign cert: %w", err)
 							}
