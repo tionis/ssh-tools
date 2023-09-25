@@ -309,10 +309,6 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							signingConf, err := cliFlagsToSigningConfig(c)
-							if err != nil {
-								return fmt.Errorf("failed to parse signing config: %w", err)
-							}
 							var cert *certs.Cert
 							if c.Bool("stdin") {
 								cert, err = certs.FromStdin()
@@ -321,6 +317,10 @@ func main() {
 								}
 							} else {
 								if c.String("sftp") != "" {
+									signingConf, err := cliFlagsToSigningConfig(c)
+									if err != nil {
+										return fmt.Errorf("failed to parse signing config: %w", err)
+									}
 									client, err := sftp_handler.SFTPGetClient(
 										signingConf,
 										homeDir,
