@@ -154,11 +154,11 @@ func main() {
 								}
 							}
 
-							bytes, err := io.ReadAll(reader)
+							keyBytes, err := io.ReadAll(reader)
 							if err != nil {
 								return fmt.Errorf("failed to read key: %w", err)
 							}
-							err = cert.SetKeyFromBytes(bytes)
+							err = cert.SetKeyFromBytes(keyBytes)
 							if err != nil {
 								return fmt.Errorf("failed to set key: %w", err)
 							}
@@ -196,6 +196,10 @@ func main() {
 								Aliases: []string{"c"},
 								Usage:   "path to cert to renew",
 								Value:   path.Join(homeDir, ".ssh", "id_ed25519-cert.pub"),
+							},
+							&cli.BoolFlag{
+								Name:  "dont-verify",
+								Usage: "don't verify cert before renewal",
 							},
 						),
 						Action: func(c *cli.Context) error {
@@ -272,6 +276,12 @@ func main() {
 							cert, err := certs.FromBytes(certBytes)
 							if err != nil {
 								return fmt.Errorf("failed to parse cert: %w", err)
+							}
+							if !c.Bool("dont-verify") {
+								err = cert.Verify(sigchain.TrustedKeys)
+								if err != nil {
+									return fmt.Errorf("failed to verify cert: %w", err)
+								}
 							}
 							err = cert.Renew(signingConf, changes)
 							if err != nil {
