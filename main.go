@@ -10,12 +10,16 @@ import (
 	"golang.org/x/crypto/ssh"
 	"io"
 	"log"
+	"log/slog"
 	"os"
 	"path"
 	"strings"
 	"tasadar.net/tionis/ssh-tools/certs"
 	"tasadar.net/tionis/ssh-tools/manage"
+	proxyClient "tasadar.net/tionis/ssh-tools/proxy/client"
+	proxyServer "tasadar.net/tionis/ssh-tools/proxy/server"
 	sigchainLib "tasadar.net/tionis/ssh-tools/sigchain"
+	"tasadar.net/tionis/ssh-tools/util"
 	"tasadar.net/tionis/ssh-tools/util/sftp_handler"
 	"time"
 )
@@ -30,6 +34,7 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	var logger *slog.Logger
 	var fishCompletion string
 	var sigchain *sigchainLib.Sigchain
 	homeDir, err := os.UserHomeDir()
@@ -53,8 +58,96 @@ func main() {
 				Usage: "hash of sigchain node to use as trust anchor\n" +
 					"if this is empty the sigchain file is trusted as is",
 			},
+			&cli.StringFlag{
+				Name:    "log-level",
+				Aliases: []string{"ll"},
+				Usage:   "log level to use",
+				Value:   "info",
+			},
+		},
+		Before: func(c *cli.Context) error {
+			logLevel, err := parseLogLevel(c.String("log-level"))
+			if err != nil {
+				return fmt.Errorf("failed to parse log level: %w", err)
+			}
+			addSource := false
+			if logLevel == slog.LevelDebug {
+				addSource = true
+			}
+			logger = slog.New(
+				slog.NewTextHandler(
+					os.Stdout,
+					&slog.HandlerOptions{
+						AddSource: addSource,
+						Level:     logLevel,
+					}))
+			return nil
 		},
 		Commands: []*cli.Command{
+			{
+				Name:  "proxy",
+				Usage: "commands for websocket proxy",
+				Subcommands: []*cli.Command{
+					{
+						Name:  "server",
+						Usage: "start a websocket proxy server",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:  "addr",
+								Usage: "address to listen on",
+								Value: "0.0.0.0:80",
+							},
+							&cli.StringFlag{
+								Name:  "authorized-keys",
+								Usage: "path to authorized keys file",
+								Value: path.Join(homeDir, ".ssh", "authorized_keys"),
+							},
+						},
+						Action: func(c *cli.Context) error {
+							file, err := os.ReadFile(c.Path("authorized-keys"))
+							if err != nil {
+								return fmt.Errorf("failed to read authorized keys: %w", err)
+							}
+							keys, err := util.ParseAuthorizedKeys(file)
+							if err != nil {
+								return err
+							}
+							server, err := proxyServer.New(logger, "", keys, c.String("addr"))
+							if err != nil {
+								return err
+							}
+							return server.Start()
+						},
+					},
+					{
+						Name: "client",
+						Usage: "start a websocket proxy client\n" +
+							"use as `ProxyCommand ssh-proxy \"base_url\" %h %p",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:  "key",
+								Usage: "path to key to use",
+							},
+						},
+						Action: func(c *cli.Context) error {
+							var signer ssh.Signer
+							if c.String("key") != "" {
+								signer, err = util.GetSignerFromFile(c.Path("key"))
+							} else {
+								signer, err = util.GetDefaultSigner()
+							}
+							if err != nil {
+								return fmt.Errorf("failed to get signer: %w", err)
+							}
+							client, err := proxyClient.New(logger, signer)
+							if err != nil {
+								return fmt.Errorf("failed to create client: %w", err)
+							}
+							return client.Connect(strings.Join(c.Args().Slice(), "/"))
+						},
+					},
+				},
+			},
 			{
 				Name:    "cert",
 				Aliases: []string{"c"},
@@ -694,6 +787,21 @@ func main() {
 
 	if err := app.Run(os.Args); err != nil {
 		log.Fatalf("failed to run app: %v", err)
+	}
+}
+
+func parseLogLevel(logLevel string) (slog.Level, error) {
+	switch logLevel {
+	case "debug":
+		return slog.LevelDebug, nil
+	case "info":
+		return slog.LevelInfo, nil
+	case "warn":
+		return slog.LevelWarn, nil
+	case "error":
+		return slog.LevelError, nil
+	default:
+		return slog.LevelInfo, fmt.Errorf("invalid log level: %s", logLevel)
 	}
 }
 
