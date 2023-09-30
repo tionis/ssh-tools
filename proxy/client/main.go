@@ -77,7 +77,7 @@ func (c *Client) Connect(url string) error {
 	}()
 
 	// stdin -> websocket
-	// TODO: NextWriter() seems to be broken.
+	// DOSOMEDAY: NextWriter() seems to be broken.
 	if err := lib.File2WS(c.log, ctx, cancel, os.Stdin, conn); err == io.EOF {
 		if err := conn.WriteControl(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),

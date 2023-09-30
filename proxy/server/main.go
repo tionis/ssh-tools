@@ -104,7 +104,10 @@ func (s *Server) handleProxy(upgrader websocket.Upgrader, w http.ResponseWriter,
 	if err != nil {
 		s.log.Error("Failed to verify request", "error", err)
 		w.WriteHeader(http.StatusUnauthorized)
-		w.Write([]byte("403 - Access forbidden"))
+		_, err := w.Write([]byte("403 - Access forbidden"))
+		if err != nil {
+			s.log.Error("Failed to write response", "error", err)
+		}
 		return
 	}
 
@@ -152,7 +155,7 @@ func (s *Server) handleProxy(upgrader websocket.Upgrader, w http.ResponseWriter,
 	}()
 
 	// server -> websocket
-	// TODO: NextWriter() seems to be broken.
+	// DOSOMEDAY: NextWriter() seems to be broken.
 	if err := lib.File2WS(s.log, ctx, cancel, conn2, conn); err == io.EOF {
 		if err := conn.WriteControl(websocket.CloseMessage,
 			websocket.FormatCloseMessage(websocket.CloseNormalClosure, ""),
