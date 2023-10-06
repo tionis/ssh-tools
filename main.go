@@ -14,11 +14,11 @@ import (
 	"os"
 	"path"
 	"strings"
+	"tasadar.net/tionis/ssh-tools/allowed_signers"
 	"tasadar.net/tionis/ssh-tools/certs"
 	"tasadar.net/tionis/ssh-tools/manage"
 	proxyClient "tasadar.net/tionis/ssh-tools/proxy/client"
 	proxyServer "tasadar.net/tionis/ssh-tools/proxy/server"
-	sigchainLib "tasadar.net/tionis/ssh-tools/sigchain"
 	"tasadar.net/tionis/ssh-tools/util"
 	"tasadar.net/tionis/ssh-tools/util/sftp_handler"
 	"time"
@@ -36,7 +36,7 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	var logger *slog.Logger
 	var fishCompletion string
-	var sigchain *sigchainLib.Sigchain
+	var allowedSigners allowed_signers.AllowedSigners
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Println("failed to get home dir: ", err)
@@ -81,6 +81,14 @@ func main() {
 						AddSource: addSource,
 						Level:     logLevel,
 					}))
+			data, err := os.ReadFile(c.Path("allowed-signers"))
+			if err != nil {
+				return fmt.Errorf("failed to read allowed signers: %w", err)
+			}
+			allowedSigners, err = allowed_signers.ParseAllowedSigners(data)
+			if err != nil {
+				return fmt.Errorf("failed to parse allowed signers: %w", err)
+			}
 			return nil
 		},
 		Commands: []*cli.Command{
@@ -371,7 +379,7 @@ func main() {
 								return fmt.Errorf("failed to parse cert: %w", err)
 							}
 							if !c.Bool("dont-verify") {
-								err = cert.Verify(sigchain.TrustedKeys)
+								err = allowedSigners.VerifyCert(cert.Cert)
 								if err != nil {
 									return fmt.Errorf("failed to verify cert: %w", err)
 								}
@@ -483,17 +491,6 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
-							var trustAnchor sql.NullString
-							if c.String("trust") != "" {
-								trustAnchor = sql.NullString{
-									String: c.String("trust"),
-									Valid:  true,
-								}
-							}
-							sigchain, err = sigchainLib.New(c.Path("sigchain"), trustAnchor)
-							if err != nil {
-								return fmt.Errorf("failed to create sigchain: %w", err)
-							}
 							var cert *certs.Cert
 							if c.Bool("stdin") {
 								cert, err = certs.FromStdin()
@@ -533,7 +530,7 @@ func main() {
 									}
 								}
 							}
-							err := sigchain.VerifyCert(cert)
+							err := allowedSigners.VerifyCert(cert.Cert)
 							if err != nil {
 								return fmt.Errorf("failed to verify cert: %w", err)
 							}
