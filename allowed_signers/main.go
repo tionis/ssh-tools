@@ -7,11 +7,60 @@ import (
 	"errors"
 	"fmt"
 	"github.com/hiddeco/sshsig"
+	"golang.org/x/crypto/ssh"
 	"io"
 	"strings"
-
-	"golang.org/x/crypto/ssh"
+	"tasadar.net/tionis/ssh-tools/allowed_signers/glob"
+	"time"
 )
+
+var keyAlgos = map[string]bool{
+	ssh.KeyAlgoDSA:        true,
+	ssh.KeyAlgoRSA:        true,
+	ssh.KeyAlgoECDSA256:   true,
+	ssh.KeyAlgoECDSA384:   true,
+	ssh.KeyAlgoECDSA521:   true,
+	ssh.KeyAlgoED25519:    true,
+	ssh.KeyAlgoRSASHA512:  true,
+	ssh.KeyAlgoRSASHA256:  true,
+	ssh.KeyAlgoSKECDSA256: true,
+	ssh.KeyAlgoSKED25519:  true,
+}
+
+func splitAtComma(str string) []string {
+	parts := strings.Split(str, ",")
+	finalParts := make([]string, 0)
+
+	for _, part := range parts {
+		if strings.HasSuffix(part, "\\") {
+			finalParts[len(finalParts)-1] += "," + strings.TrimSuffix(part, "\\")
+		} else {
+			finalParts = append(finalParts, part)
+		}
+	}
+
+	return finalParts
+}
+
+func splitAtSpacesExceptInQuotes(in []byte) [][]byte {
+	var res [][]byte
+	var beg int
+	var inQuotes bool
+
+	for i := 0; i < len(in); i++ {
+		if in[i] == ' ' && !inQuotes {
+			res = append(res, in[beg:i])
+			beg = i + 1
+		} else if in[i] == '"' {
+			if !inQuotes {
+				inQuotes = true
+			} else if i > 0 && in[i-1] != '\\' {
+				inQuotes = false
+			}
+		}
+	}
+	return append(res, in[beg:])
+}
 
 // ParseAllowedSigner parses an entry in the format of the allowed_signers file.
 //
@@ -32,7 +81,7 @@ import (
 // This function is an addition to the golang.org/x/crypto/ssh package, which
 // does offer ssh.ParseAuthorizedKey and ssh.ParseKnownHosts, but not a parser
 // for allowed_signers files which has a slightly different format.
-func ParseAllowedSigner(in []byte) (principals []string, options []string, pubKey ssh.PublicKey, rest []byte, err error) {
+func ParseAllowedSigner(in []byte) (principals []string, options []string, pubKey ssh.PublicKey, comment *string, rest []byte, err error) {
 	for len(in) > 0 {
 		end := bytes.IndexByte(in, '\n')
 		if end != -1 {
@@ -61,9 +110,10 @@ func ParseAllowedSigner(in []byte) (principals []string, options []string, pubKe
 
 		// Split the line into the principal list, options, and key.
 		// The options are not required, and may not be present.
-		keyFields := bytes.Fields(in)
-		if len(keyFields) < 3 || len(keyFields) > 4 {
-			return nil, nil, nil, nil, errors.New("ssh: invalid entry in allowed_signers data")
+		keyFields := splitAtSpacesExceptInQuotes(in)
+		hasOptions := true
+		if _, ok := keyAlgos[string(keyFields[1])]; ok {
+			hasOptions = false
 		}
 
 		// The first field is the principal list.
@@ -71,33 +121,36 @@ func ParseAllowedSigner(in []byte) (principals []string, options []string, pubKe
 
 		// If there are 4 fields, the second field is the options list.
 		var options string
-		if len(keyFields) == 4 {
+		if hasOptions {
 			options = string(keyFields[1])
 		}
-
-		// TODO parse optional comment at the end (not specified in the standard, but still parsed by openssh)
 
 		// keyFields[len(keyFields)-2] contains the key type (e.g. "sha-rsa").
 		// This information is also available in the base64-encoded key, and
 		// thus ignored here.
-		key := bytes.Join(keyFields[len(keyFields)-1:], []byte(" "))
-		if pubKey, err = parseAuthorizedKey(key); err != nil {
-			return nil, nil, nil, nil, err
+		var key []byte
+		if hasOptions {
+			key = bytes.Join(keyFields[3:], []byte(" "))
+		} else {
+			key = bytes.Join(keyFields[2:], []byte(" "))
 		}
-		return strings.Split(principals, ","), strings.Split(options, ","), pubKey, rest, nil
+
+		// the format does not allow a comment, but openssh allows it in practice
+		var commentStr string
+		if pubKey, commentStr, err = parseAuthorizedKey(key); err != nil {
+			return nil, nil, nil, nil, nil, err
+		}
+		comment = &commentStr // TODO that's a bit ugly
+		var optionsArr []string
+		if len(options) > 0 {
+			optionsArr = strings.Split(options, ",")
+		}
+		return strings.Split(principals, ","), optionsArr, pubKey, comment, rest, nil
 	}
-	return nil, nil, nil, nil, io.EOF
+	return nil, nil, nil, nil, nil, io.EOF
 }
 
-// parseAuthorizedKey parses a public key in OpenSSH authorized_keys format
-// (see sshd(8) manual page) once the options and key type fields have been
-// removed.
-//
-// This function is a modified copy of the parseAuthorizedKey function from the
-// golang.org/x/crypto/ssh package, and does not return any comments.
-//
-// xref: https://cs.opensource.google/go/x/crypto/+/refs/tags/v0.7.0:ssh/keys.go;l=88?q=parseAuthorizedKey
-func parseAuthorizedKey(in []byte) (out ssh.PublicKey, err error) {
+func parseAuthorizedKey(in []byte) (out ssh.PublicKey, comment string, err error) {
 	in = bytes.TrimSpace(in)
 
 	i := bytes.IndexAny(in, " \t")
@@ -109,54 +162,113 @@ func parseAuthorizedKey(in []byte) (out ssh.PublicKey, err error) {
 	key := make([]byte, base64.StdEncoding.DecodedLen(len(base64Key)))
 	n, err := base64.StdEncoding.Decode(key, base64Key)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	key = key[:n]
 	out, err = ssh.ParsePublicKey(key)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return out, nil
+	comment = string(bytes.TrimSpace(in[i:]))
+	return out, comment, nil
 }
 
 type AllowedSigners struct {
-	Entries map[ssh.PublicKey]AllowedSignerEntry
+	Entries     map[string]AllowedSignerEntry
+	CertChecker ssh.CertChecker
 }
 
 type AllowedSignerEntry struct {
-	Principals []string
-	IsCA 	 bool
-	Namespaces []string
-	Comment string
-	ValidAfter sql.NullTime
-	ValidBefore sql.NullTime
+	Principals       []string
+	principalChecker func(string) sql.NullString
+	IsCA             bool
+	Namespaces       []string
+	nameSpaceChecker func(string) sql.NullString
+	Comment          *string
+	ValidAfter       sql.NullTime
+	ValidBefore      sql.NullTime
 }
 
 func (a AllowedSignerEntry) NameSpaceAllowed(namespace string) bool {
-	for _, opt := range a.Principals {
-		if opt == namespace {
-			return true
-		}
-		// TODO handle globs
-	}
-	return false
+	matched := a.nameSpaceChecker(namespace)
+	return matched.Valid
 }
 
 func (a AllowedSignerEntry) PrincipalsAllowed(namespace string) bool {
-	for _, opt := range a.Principals {
-		if opt == namespace {
-			return true
-		}
-		// TODO handle globs
+	matched := a.principalChecker(namespace)
+	return matched.Valid
+}
+
+func parseTime(s string) (result time.Time, err error) {
+	// format: YYYYMMDD[Z] or YYYYMMDDHHMM[SS][Z]
+	var loc *time.Location
+	utc := strings.HasSuffix(s, "Z")
+	timestamp := strings.TrimSuffix(s, "Z")
+	if utc {
+		loc = time.UTC
+	} else {
+		loc = time.Local
 	}
-	return false
+	switch len(timestamp) {
+	case 8:
+		result, err = time.ParseInLocation("20060102", timestamp, loc)
+	case 12:
+		result, err = time.ParseInLocation("200601021504", timestamp, loc)
+	case 14:
+		result, err = time.ParseInLocation("20060102150405", timestamp, loc)
+	default:
+		return time.Time{}, errors.New("invalid timestamp")
+	}
+	return
+}
+
+func parseOptions(options []string) (isCA bool, namespaces []string, validAfter sql.NullTime, validBefore sql.NullTime, err error) {
+	for _, option := range options {
+		if option == "cert-authority" {
+			isCA = true
+		} else if strings.HasPrefix(option, "namespaces=") {
+			if option[11] == '"' {
+				namespaces = splitAtComma(option[12 : len(option)-1])
+			} else {
+				namespaces = splitAtComma(option[11:])
+			}
+		} else if strings.HasPrefix(option, "valid-after=") {
+			var timestamp string
+			validAfter.Valid = true
+			if option[12] == '"' {
+				timestamp = option[13 : len(option)-1]
+			} else {
+				timestamp = option[12:]
+			}
+			validAfter.Valid = true
+			validAfter.Time, err = parseTime(timestamp)
+			if err != nil {
+				return false, nil, sql.NullTime{}, sql.NullTime{}, fmt.Errorf("failed to parse valid-after: %w", err)
+			}
+		} else if strings.HasPrefix(option, "valid-before=") {
+			var timestamp string
+			validBefore.Valid = true
+			if option[13] == '"' {
+				timestamp = option[14 : len(option)-1]
+			} else {
+				timestamp = option[13:]
+			}
+			validBefore.Time, err = parseTime(timestamp)
+			if err != nil {
+				return false, nil, sql.NullTime{}, sql.NullTime{}, fmt.Errorf("failed to parse valid-before: %w", err)
+			}
+		} else {
+			return false, nil, sql.NullTime{}, sql.NullTime{}, fmt.Errorf("unknown option: %s", option)
+		}
+	}
+	return
 }
 
 // ParseAllowedSigners parses an allowed_signers file.
 func ParseAllowedSigners(b []byte) (AllowedSigners, error) {
-	keyMap := make(map[ssh.PublicKey]AllowedSignerEntry)
+	keyMap := make(map[string]AllowedSignerEntry)
 	for len(b) > 0 {
-		principals, options, pubkey, rest, err := ParseAllowedSigner(b)
+		principals, options, pubkey, comment, rest, err := ParseAllowedSigner(b)
 		if err != nil {
 			return AllowedSigners{}, fmt.Errorf("failed to parse allowed signer: %w", err)
 		}
@@ -164,38 +276,91 @@ func ParseAllowedSigners(b []byte) (AllowedSigners, error) {
 		if err != nil {
 			return AllowedSigners{}, fmt.Errorf("failed to parse options: %w", err)
 		}
-		keyMap[pubkey] = AllowedSignerEntry{
-			Principals: principals,
-			IsCA: isCA,
-			Namespaces: namespaces,
-			Comment: "",
-			ValidAfter: validAfter,
-			ValidBefore: validBefore,
+		nameSpaceChecker, err := glob.GetListMatcher(namespaces)
+		if err != nil {
+			return AllowedSigners{}, fmt.Errorf("failed to create namespace matcher: %w", err)
+		}
+		principalChecker, err := glob.GetListMatcher(principals)
+		if err != nil {
+			return AllowedSigners{}, fmt.Errorf("failed to create principal matcher: %w", err)
+		}
+		keyMap[string(pubkey.Marshal())] = AllowedSignerEntry{
+			Principals:       principals,
+			principalChecker: principalChecker,
+			IsCA:             isCA,
+			Namespaces:       namespaces,
+			nameSpaceChecker: nameSpaceChecker,
+			Comment:          comment,
+			ValidAfter:       validAfter,
+			ValidBefore:      validBefore,
 		}
 		b = rest
 	}
-	// TODO do some processing to handle principal matching more efficiently
-	return AllowedSigners{
+	allowedSigner := AllowedSigners{
 		Entries: keyMap,
-	}, nil
+		CertChecker: ssh.CertChecker{
+			IsRevoked: func(cert *ssh.Certificate) bool {
+				// TODO handle revocations here
+				return false
+			},
+		},
+	}
+	return allowedSigner, nil
 }
 
-func (a AllowedSigners) VerifyCert(cert *ssh.Certificate) error {
-	// TODO verify cert
-	return nil
-}
-
-func (a AllowedSigners) VerifySignature(m io.Reader, sig *sshsig.Signature, hashAlgorithm sshsig.HashAlgorithm, namespace string) error {
-	keyInfo, ok := a.Entries[sig.PublicKey]
+func (a *AllowedSigners) VerifySignature(m io.Reader, sig *sshsig.Signature, hashAlgorithm sshsig.HashAlgorithm, principal, namespace string, atTime sql.NullTime) error {
+	var pubKey ssh.PublicKey
+	switch sig.PublicKey.(type) {
+	case *ssh.Certificate:
+		cert := sig.PublicKey.(*ssh.Certificate)
+		err := a.CertChecker.CheckCert(principal, cert)
+		if err != nil {
+			return fmt.Errorf("failed to verify cert: %w", err)
+		}
+		if _, ok := a.Entries[string(cert.SignatureKey.Marshal())]; !ok {
+			return errors.New("no matching signing key for cert found")
+		}
+		principalMatcher, err := glob.GetListMatcher(cert.ValidPrincipals)
+		if err != nil {
+			return fmt.Errorf("failed to create principal matcher: %w", err)
+		}
+		principalMatch := principalMatcher(principal)
+		if !principalMatch.Valid {
+			return errors.New("principal not allowed in cert")
+		}
+		if _, ok := cert.Extensions["namespaces"]; ok {
+			// TODO ensure namespaces extension is supported everywhere else
+			namespaceMatcher, err := glob.GetListMatcher(splitAtComma(cert.Extensions["namespaces"]))
+			if err != nil {
+				return fmt.Errorf("failed to create namespace matcher: %w", err)
+			}
+			namespaceMatch := namespaceMatcher(namespace)
+			if !namespaceMatch.Valid {
+				return errors.New("namespace not allowed in cert")
+			}
+		}
+		pubKey = cert.SignatureKey
+	default:
+		pubKey = sig.PublicKey
+	}
+	keyInfo, ok := a.Entries[string(pubKey.Marshal())]
 	if !ok {
-		// TODO handle certs
-		// TODO check in cert if namespace is allowed (use special option in cert)
 		return errors.New("no matching key found")
 	}
 	if !keyInfo.NameSpaceAllowed(namespace) {
 		return errors.New("namespace not allowed")
 	}
-	// TODO handle time using valid-after and valid-before
+	if !keyInfo.PrincipalsAllowed(principal) {
+		return errors.New("principal not allowed")
+	}
+	if atTime.Valid {
+		if keyInfo.ValidAfter.Valid && atTime.Time.Before(keyInfo.ValidAfter.Time) {
+			return errors.New("signature not valid yet")
+		}
+		if keyInfo.ValidBefore.Valid && atTime.Time.After(keyInfo.ValidBefore.Time) {
+			return errors.New("signature expired")
+		}
+	}
 	err := sshsig.Verify(m, sig, sig.PublicKey, hashAlgorithm, namespace)
 	if err != nil {
 		return fmt.Errorf("failed to verify signature: %w", err)
@@ -203,6 +368,46 @@ func (a AllowedSigners) VerifySignature(m io.Reader, sig *sshsig.Signature, hash
 	return nil
 }
 
-func (a *AllowedSigners)
-
-// TODO render to allowed_signers file
+func (a *AllowedSigners) Render() ([]byte, error) {
+	var buf bytes.Buffer
+	for marshalledKey, entry := range a.Entries {
+		key, err := ssh.ParsePublicKey([]byte(marshalledKey))
+		if err != nil {
+			return nil, fmt.Errorf("failed to unmarshal key: %w", err)
+		}
+		buf.WriteString(strings.Join(entry.Principals, ","))
+		buf.WriteRune(' ')
+		if entry.IsCA {
+			buf.WriteString("cert-authority,")
+		}
+		if len(entry.Namespaces) > 0 {
+			buf.WriteString("namespaces=")
+			buf.WriteString(strings.Join(entry.Namespaces, ","))
+			buf.WriteRune(',')
+		}
+		if entry.ValidAfter.Valid {
+			buf.WriteString("valid-after=")
+			// keep timezone information?
+			buf.WriteString(entry.ValidAfter.Time.UTC().Format("20060102150405Z"))
+			buf.WriteRune(',')
+		}
+		if entry.ValidBefore.Valid {
+			buf.WriteString("valid-before=")
+			// keep timezone information?
+			buf.WriteString(entry.ValidBefore.Time.UTC().Format("20060102150405Z"))
+			buf.WriteRune(',')
+		}
+		// remove last comma
+		buf.Truncate(buf.Len() - 1)
+		buf.WriteRune(' ')
+		buf.Write([]byte(key.Type()))
+		buf.WriteRune(' ')
+		buf.Write([]byte(base64.StdEncoding.EncodeToString(key.Marshal())))
+		if entry.Comment != nil {
+			buf.WriteRune(' ')
+			buf.WriteString(*entry.Comment)
+		}
+		buf.WriteRune('\n')
+	}
+	return buf.Bytes(), nil
+}

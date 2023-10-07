@@ -30,7 +30,7 @@ import (
 // think of new name for this project
 // think of ways to make this project importable for a single binary
 // across git-tools, ssh-tools, shell-tools, etc
-// instant renewal over ssh-tools server and patchbay
+// instant renewal over ssh-tools server and patch bay
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
@@ -47,16 +47,11 @@ func main() {
 		EnableBashCompletion: true,
 		Flags: []cli.Flag{
 			&cli.PathFlag{
-				Name:      "sigchain",
+				Name:      "allowed_signers",
 				Aliases:   []string{"s"},
 				Usage:     "sigchain file to use",
-				Value:     path.Join(homeDir, ".ssh", "sigchain"),
+				Value:     path.Join(homeDir, ".ssh", "allowed_signers"),
 				TakesFile: true,
-			},
-			&cli.StringFlag{
-				Name: "trust",
-				Usage: "hash of sigchain node to use as trust anchor\n" +
-					"if this is empty the sigchain file is trusted as is",
 			},
 			&cli.StringFlag{
 				Name:    "log-level",
@@ -81,7 +76,7 @@ func main() {
 						AddSource: addSource,
 						Level:     logLevel,
 					}))
-			data, err := os.ReadFile(c.Path("allowed-signers"))
+			data, err := os.ReadFile(c.Path("allowed_signers"))
 			if err != nil {
 				return fmt.Errorf("failed to read allowed signers: %w", err)
 			}
@@ -379,7 +374,7 @@ func main() {
 								return fmt.Errorf("failed to parse cert: %w", err)
 							}
 							if !c.Bool("dont-verify") {
-								err = allowedSigners.VerifyCert(cert.Cert)
+								err = allowedSigners.CertChecker.CheckCert(cert.Cert.ValidPrincipals[0], cert.Cert)
 								if err != nil {
 									return fmt.Errorf("failed to verify cert: %w", err)
 								}
@@ -490,8 +485,12 @@ func main() {
 								Usage: "read cert from remote using sftp",
 							},
 						},
+						UsageText: "principal to check",
 						Action: func(c *cli.Context) error {
 							var cert *certs.Cert
+							if len(c.Args().Slice()) != 1 {
+								return fmt.Errorf("principal to check is required")
+							}
 							if c.Bool("stdin") {
 								cert, err = certs.FromStdin()
 								if err != nil {
@@ -530,7 +529,7 @@ func main() {
 									}
 								}
 							}
-							err := allowedSigners.VerifyCert(cert.Cert)
+							err := allowedSigners.CertChecker.CheckCert(c.Args().First(), cert.Cert)
 							if err != nil {
 								return fmt.Errorf("failed to verify cert: %w", err)
 							}

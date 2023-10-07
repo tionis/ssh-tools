@@ -6,7 +6,7 @@ import (
 )
 
 type Address struct {
-	RootHash       []byte
+	RootHash       *Hash
 	ConnectionType string
 	ConnectionAddr string
 }
@@ -20,7 +20,7 @@ func AddrParse(str string) (*Address, error) {
 		return nil, fmt.Errorf("invalid sigchain addr (wrong prefix): %q", str)
 	}
 	return &Address{
-		RootHash:       []byte(parts[1]),
+		//RootHash:      []byte(parts[1]),
 		ConnectionType: parts[2],
 		ConnectionAddr: strings.Join(parts[3:], "/"),
 	}, nil
