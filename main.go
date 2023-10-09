@@ -344,6 +344,8 @@ func main() {
 										return sftpClient.Close()
 									}
 								} else {
+									// TODO check if cert is loaded in agent
+									// if it is, save it to be replaced after renewal
 									certFile, err := os.OpenFile(
 										c.Path("cert"),
 										os.O_RDWR,
