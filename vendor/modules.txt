@@ -29,42 +29,16 @@ github.com/gorilla/websocket
 # github.com/hiddeco/sshsig v0.1.0
 ## explicit; go 1.13
 github.com/hiddeco/sshsig
-# github.com/ipfs/go-cid v0.0.7
-## explicit; go 1.13
-github.com/ipfs/go-cid
-# github.com/klauspost/cpuid/v2 v2.2.3
-## explicit; go 1.15
-github.com/klauspost/cpuid/v2
+# github.com/keybase/go-codec v0.0.0-20180928230036-164397562123
+## explicit
+github.com/keybase/go-codec/codec
+# github.com/keybase/saltpack v0.0.0-20221220231257-f6cce11cfd0f
+## explicit; go 1.17
+github.com/keybase/saltpack
+github.com/keybase/saltpack/encoding/basex
 # github.com/kr/fs v0.1.0
 ## explicit
 github.com/kr/fs
-# github.com/minio/blake2b-simd v0.0.0-20160723061019-3f5f724cb5b1
-## explicit
-github.com/minio/blake2b-simd
-# github.com/minio/sha256-simd v1.0.1
-## explicit; go 1.17
-github.com/minio/sha256-simd
-# github.com/mr-tron/base58 v1.1.3
-## explicit; go 1.12
-github.com/mr-tron/base58/base58
-# github.com/multiformats/go-base32 v0.0.3
-## explicit
-github.com/multiformats/go-base32
-# github.com/multiformats/go-base36 v0.1.0
-## explicit; go 1.11
-github.com/multiformats/go-base36
-# github.com/multiformats/go-multiaddr v0.11.0
-## explicit; go 1.19
-github.com/multiformats/go-multiaddr
-# github.com/multiformats/go-multibase v0.0.3
-## explicit; go 1.11
-github.com/multiformats/go-multibase
-# github.com/multiformats/go-multihash v0.0.14
-## explicit; go 1.13
-github.com/multiformats/go-multihash
-# github.com/multiformats/go-varint v0.0.6
-## explicit; go 1.12
-github.com/multiformats/go-varint
 # github.com/pkg/sftp v1.13.6
 ## explicit; go 1.15
 github.com/pkg/sftp
@@ -79,15 +53,21 @@ github.com/russross/blackfriday/v2
 # github.com/skeema/knownhosts v1.2.1
 ## explicit; go 1.17
 github.com/skeema/knownhosts
-# github.com/spaolacci/murmur3 v1.1.0
-## explicit
-github.com/spaolacci/murmur3
 # github.com/twpayne/go-pinentry-minimal v0.0.0-20220113210447-2a5dc4396c2a
 ## explicit; go 1.17
 github.com/twpayne/go-pinentry-minimal/pinentry
 # github.com/urfave/cli/v2 v2.25.7
 ## explicit; go 1.18
 github.com/urfave/cli/v2
+# github.com/vmihailenco/msgpack/v5 v5.4.0
+## explicit; go 1.19
+github.com/vmihailenco/msgpack/v5
+github.com/vmihailenco/msgpack/v5/msgpcode
+# github.com/vmihailenco/tagparser/v2 v2.0.0
+## explicit; go 1.15
+github.com/vmihailenco/tagparser/v2
+github.com/vmihailenco/tagparser/v2/internal
+github.com/vmihailenco/tagparser/v2/internal/parser
 # github.com/xrash/smetrics v0.0.0-20201216005158-039620a65673
 ## explicit
 github.com/xrash/smetrics
@@ -102,16 +82,17 @@ golang.org/x/crypto/curve25519/internal/field
 golang.org/x/crypto/ed25519
 golang.org/x/crypto/internal/alias
 golang.org/x/crypto/internal/poly1305
+golang.org/x/crypto/nacl/box
+golang.org/x/crypto/nacl/secretbox
+golang.org/x/crypto/poly1305
 golang.org/x/crypto/ripemd160
+golang.org/x/crypto/salsa20/salsa
 golang.org/x/crypto/sha3
 golang.org/x/crypto/ssh
 golang.org/x/crypto/ssh/agent
 golang.org/x/crypto/ssh/internal/bcrypt_pbkdf
 golang.org/x/crypto/ssh/knownhosts
-# golang.org/x/exp v0.0.0-20230725012225-302865e7556b
-## explicit; go 1.20
-golang.org/x/exp/constraints
-golang.org/x/exp/slices
+golang.org/x/crypto/ssh/terminal
 # golang.org/x/net v0.10.0
 ## explicit; go 1.17
 golang.org/x/net/internal/socks
@@ -120,8 +101,12 @@ golang.org/x/net/proxy
 ## explicit; go 1.17
 golang.org/x/sys/cpu
 golang.org/x/sys/internal/unsafeheader
+golang.org/x/sys/plan9
 golang.org/x/sys/unix
 golang.org/x/sys/windows
+# golang.org/x/term v0.12.0
+## explicit; go 1.17
+golang.org/x/term
 # h12.io/socks v1.0.1
 ## explicit; go 1.9
 h12.io/socks

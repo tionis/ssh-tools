@@ -14,6 +14,7 @@ import (
 	"os"
 	"path"
 	"strings"
+	"tasadar.net/tionis/ssh-tools/agent"
 	"tasadar.net/tionis/ssh-tools/allowed_signers"
 	"tasadar.net/tionis/ssh-tools/certs"
 	"tasadar.net/tionis/ssh-tools/manage"
@@ -87,6 +88,20 @@ func main() {
 			return nil
 		},
 		Commands: []*cli.Command{
+			{
+				Name: "agent",
+				Flags: []cli.Flag{
+					&cli.PathFlag{
+						Name:  "socket",
+						Usage: "path to socket to use",
+						Value: getAgentSock(),
+					},
+				},
+				Action: func(c *cli.Context) error {
+					agent.RunAgent(c.Path("socket"))
+					return nil
+				},
+			},
 			{
 				Name:  "proxy",
 				Usage: "commands for websocket proxy",
@@ -907,4 +922,13 @@ func cliFlagsToSigningConfig(c *cli.Context) (certs.SigningConfig, error) {
 	return certs.CreateSigningConf(
 		c.Duration("clock-compensation"),
 		c.Bool("ignore-expiry"))
+}
+
+func getAgentSock() string {
+	globalTmpDir := os.TempDir()
+	tmpDir, err := os.MkdirTemp(globalTmpDir, "ssh-tools-agent.*")
+	if err != nil {
+		return path.Join(globalTmpDir, "ssh-tools-agent.sock")
+	}
+	return path.Join(tmpDir, "ssh-tools-agent.sock")
 }
