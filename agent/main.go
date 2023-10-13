@@ -283,7 +283,7 @@ func New() *Agent {
 	}
 }
 
-func RunAgent(socketPath string) {
+func ServeAgent(socketPath string) {
 	if terminal.IsTerminal(int(os.Stdin.Fd())) {
 		log.Println("Warning: ssh-tools agent is meant to run as a background daemon.")
 		log.Println("Running multiple instances is likely to lead to conflicts.")

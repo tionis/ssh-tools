@@ -8,13 +8,15 @@ import (
 	"github.com/hiddeco/sshsig"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/agent"
 	"io"
 	"log"
 	"log/slog"
+	"net"
 	"os"
 	"path"
 	"strings"
-	"tasadar.net/tionis/ssh-tools/agent"
+	sshToolsAgent "tasadar.net/tionis/ssh-tools/agent"
 	"tasadar.net/tionis/ssh-tools/allowed_signers"
 	"tasadar.net/tionis/ssh-tools/certs"
 	"tasadar.net/tionis/ssh-tools/manage"
@@ -90,6 +92,8 @@ func main() {
 		Commands: []*cli.Command{
 			{
 				Name: "agent",
+				Description: "ssh-tools agent server\n" +
+					"run as a background daemon to manage keys",
 				Flags: []cli.Flag{
 					&cli.PathFlag{
 						Name:  "socket",
@@ -98,8 +102,89 @@ func main() {
 					},
 				},
 				Action: func(c *cli.Context) error {
-					agent.RunAgent(c.Path("socket"))
+					sshToolsAgent.ServeAgent(c.Path("socket"))
 					return nil
+				},
+			},
+			{
+				Name:        "client",
+				Description: "client for ssh-tools agent server",
+				Subcommands: []*cli.Command{
+					{
+						Name: "add",
+						Flags: []cli.Flag{
+							&cli.PathFlag{
+								Name:    "key",
+								Aliases: []string{"k"},
+								Usage:   "path to key to add",
+							},
+							&cli.PathFlag{
+								Name: "cert",
+								Usage: "path to cert to add\n" +
+									"if cert is provided, key is ignored",
+							},
+							&cli.StringFlag{
+								Name: "comment",
+								Usage: "comment to use for key\n" +
+									"if not provided, the filename is used",
+							},
+							&cli.BoolFlag{
+								Name:    "confirm",
+								Aliases: []string{"c"},
+								Usage:   "confirm key usage",
+							},
+							&cli.IntFlag{
+								Name:  "lifetime",
+								Usage: "lifetime of key in seconds, 0 for unlimited",
+								Value: 0,
+							},
+						},
+						Usage: "add a key to the agent",
+						Action: func(c *cli.Context) error {
+							ag, err := getAgent()
+							if err != nil {
+								return fmt.Errorf("failed to get agent: %w", err)
+							}
+							keyToAdd := agent.AddedKey{
+								ConfirmBeforeUse: c.Bool("confirm"),
+								LifetimeSecs:     uint32(c.Int("lifetime")),
+								Comment:          c.String("comment"),
+							}
+							if c.Path("cert") != "" {
+								keyBytes, err := os.ReadFile(c.Path("cert"))
+								if err != nil {
+									return fmt.Errorf("failed to read cert: %w", err)
+								}
+								cert, err := ssh.ParsePublicKey(keyBytes)
+								if err != nil {
+									return fmt.Errorf("failed to parse cert: %w", err)
+								}
+								switch cert.(type) {
+								case *ssh.Certificate:
+									keyToAdd.Certificate = cert.(*ssh.Certificate)
+								default:
+									return fmt.Errorf("not a certificate")
+								}
+							} else if c.Path("key") != "" {
+								keyBytes, err := os.ReadFile(c.Path("key"))
+								if err != nil {
+									return fmt.Errorf("failed to read key: %w", err)
+								}
+								key, err := ssh.ParseRawPrivateKey(keyBytes)
+								if err != nil {
+									return err
+								}
+								keyToAdd.PrivateKey = key
+							} else {
+								return fmt.Errorf("no key or cert provided")
+							}
+							err = ag.Add(keyToAdd)
+							if err != nil {
+								return fmt.Errorf("failed to add key: %w", err)
+							}
+							return nil
+						},
+					},
 				},
 			},
 			{
@@ -167,7 +252,9 @@ func main() {
 				},
 			},
 			{
-				Name:    "cert",
+				Name: "cert", // TODO: rework this to be more like ssh-keygen
+				// TODO: remove dep on yubikey specifics
+				// TODO: install call out to an optional yubikey-agent thing
 				Aliases: []string{"c"},
 				Usage:   "certificate management",
 				Subcommands: []*cli.Command{
@@ -931,4 +1018,16 @@ func getAgentSock() string {
 		return path.Join(globalTmpDir, "ssh-tools-agent.sock")
 	}
 	return path.Join(tmpDir, "ssh-tools-agent.sock")
+}
+
+func getAgent() (agent.ExtendedAgent, error) {
+	agentSock := os.Getenv("SSH_AUTH_SOCK")
+	if agentSock == "" {
+		return nil, fmt.Errorf("SSH_AUTH_SOCK not set")
+	}
+	conn, err := net.Dial("unix", agentSock)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to agent: %w", err)
+	}
+	return agent.NewClient(conn), nil
 }
