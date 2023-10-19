@@ -1016,12 +1016,17 @@ func cliFlagsToSigningConfig(c *cli.Context) (certs.SigningConfig, error) {
 }
 
 func getAgentSock() string {
-	globalTmpDir := os.TempDir()
-	tmpDir, err := os.MkdirTemp(globalTmpDir, "ssh-tools-agent.*")
-	if err != nil {
-		return path.Join(globalTmpDir, "ssh-tools-agent.sock")
+	agentSock := os.Getenv("SSH_AUTH_SOCK")
+	if agentSock == "" {
+		globalTmpDir := os.TempDir()
+		tmpDir, err := os.MkdirTemp(globalTmpDir, "ssh-tools-agent.*")
+		if err != nil {
+			return path.Join(globalTmpDir, "ssh-tools-agent.sock")
+		}
+		return path.Join(tmpDir, "ssh-tools-agent.sock")
+	} else {
+		return agentSock
 	}
-	return path.Join(tmpDir, "ssh-tools-agent.sock")
 }
 
 func getAgent() (agent.ExtendedAgent, error) {
