@@ -39,7 +39,7 @@ func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	var logger *slog.Logger
 	var fishCompletion string
-	var allowedSigners allowed_signers.AllowedSigners
+	var allowedSigners allowed_signers.TrustChecker
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Println("failed to get home dir: ", err)
@@ -83,7 +83,7 @@ func main() {
 			if err != nil {
 				return fmt.Errorf("failed to read allowed signers: %w", err)
 			}
-			allowedSigners, err = allowed_signers.ParseAllowedSigners(data)
+			allowedSigners, err = allowed_signers.GetTrust(data, []byte{}, []byte{})
 			if err != nil {
 				return fmt.Errorf("failed to parse allowed signers: %w", err)
 			}
@@ -302,7 +302,8 @@ func main() {
 									sftpClient, err := sftp_handler.SFTPGetClient(
 										signingConf,
 										homeDir,
-										c.String("sftp"))
+										c.String("sftp"),
+										".ssh/id_ed25519.pub")
 									if err != nil {
 										return fmt.Errorf("failed to parse get sftp file: %w", err)
 									}
@@ -422,7 +423,8 @@ func main() {
 									sftpClient, err := sftp_handler.SFTPGetClient(
 										signingConf,
 										homeDir,
-										c.String("sftp"))
+										c.String("sftp"),
+										".ssh/id_ed25519-cert.pub")
 									if err != nil {
 										return fmt.Errorf("failed to parse get sftp file: %w", err)
 									}
@@ -534,7 +536,8 @@ func main() {
 									client, err := sftp_handler.SFTPGetClient(
 										signingConf,
 										homeDir,
-										c.String("sftp"))
+										c.String("sftp"),
+										".ssh/id_ed25519-cert.pub")
 									if err != nil {
 										return fmt.Errorf("failed to get SFTP client for remote: %w", err)
 									}
@@ -609,7 +612,8 @@ func main() {
 									client, err := sftp_handler.SFTPGetClient(
 										signingConf,
 										homeDir,
-										c.String("sftp"))
+										c.String("sftp"),
+										".ssh/id_ed25519-cert.pub")
 									open, err := client.Client.Open(client.Remote.Path)
 									if err != nil {
 										return fmt.Errorf("failed to open cert file: %w", err)

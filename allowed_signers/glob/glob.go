@@ -95,12 +95,12 @@ func GetListMatcher(patterns []string) (func(string) sql.NullString, error) {
 	for _, pattern := range positivePatterns {
 		posReg += "(^" + pattern + "$)|"
 	}
-	strings.TrimSuffix(posReg, "|")
+	posReg = strings.TrimSuffix(posReg, "|")
 	var negReg string
 	for _, pattern := range negativePatterns {
 		negReg += "(^" + pattern + "$)|"
 	}
-	strings.TrimSuffix(negReg, "|")
+	negReg = strings.TrimSuffix(negReg, "|")
 
 	p, err := regexp.Compile(posReg)
 	if err != nil {

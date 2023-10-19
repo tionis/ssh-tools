@@ -20,7 +20,7 @@ type SFTPRemote struct {
 	Path      string
 }
 
-func ParseSFTPRemote(signingConf certs.SigningConfig, homeDir, remote string) (*SFTPRemote, error) {
+func ParseSFTPRemote(signingConf certs.SigningConfig, homeDir, remote, defaultPath string) (*SFTPRemote, error) {
 	// TODO use .ssh/config to process remotes
 	parse, err := url.Parse(remote)
 	if err != nil {
@@ -60,18 +60,22 @@ func ParseSFTPRemote(signingConf certs.SigningConfig, homeDir, remote string) (*
 		//	net.JoinHostPort(parse.Hostname(), port)),
 		BannerCallback: ssh.BannerDisplayStderr(),
 	}
+	path := strings.TrimPrefix(parse.Path, "/")
+	if path == "" {
+		path = defaultPath
+	}
 	return &SFTPRemote{
 		SSHConfig: sshConfig,
 		Host:      parse.Hostname(),
 		Port:      port,
-		Path:      strings.TrimPrefix(parse.Path, "/"),
+		Path:      path,
 	}, nil
 }
 
-func SFTPGetClient(signingConf certs.SigningConfig, homeDir, remoteString string) (*SFTPClient, error) {
+func SFTPGetClient(signingConf certs.SigningConfig, homeDir, remoteString, defaultPath string) (*SFTPClient, error) {
 	var client SFTPClient
 	var err error
-	client.Remote, err = ParseSFTPRemote(signingConf, homeDir, remoteString)
+	client.Remote, err = ParseSFTPRemote(signingConf, homeDir, remoteString, defaultPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to parse Remote: %w", err)
 	}

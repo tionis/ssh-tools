@@ -22,7 +22,7 @@ func GetTemporaryRootKey(signingConf SigningConfig) (ssh.Signer, error) {
 	}
 
 	cert := DefaultUserCert()
-	cert.SetPrincipals([]string{"root", "tionis", "admin", "*"})
+	cert.SetPrincipals([]string{"root", "tionis.dev", "*"})
 	cert.SetIdentifier(hostname + "@tionis.dev")
 	cert.SetValidAfter(time.Now().Add(-1 * time.Minute))
 	cert.SetValidBefore(time.Now().Add(1 * time.Minute))

@@ -9,10 +9,13 @@ import (
 	"github.com/hiddeco/sshsig"
 	"golang.org/x/crypto/ssh"
 	"io"
+	"net"
 	"strings"
 	"tasadar.net/tionis/ssh-tools/allowed_signers/glob"
 	"time"
 )
+
+// TODO refactor this into more manageable subpackages/files
 
 var keyAlgos = map[string]bool{
 	ssh.KeyAlgoDSA:        true,
@@ -173,9 +176,11 @@ func parseAuthorizedKey(in []byte) (out ssh.PublicKey, comment string, err error
 	return out, comment, nil
 }
 
-type AllowedSigners struct {
-	Entries     map[string]AllowedSignerEntry
-	CertChecker ssh.CertChecker
+type TrustChecker struct {
+	Entries        map[string]AllowedSignerEntry
+	CertChecker    ssh.CertChecker
+	AuthorizedKeys map[string]authorizedKey
+	//KnownHosts     map[string]knownHost // TODO https://github.com/skeema/knownhosts
 }
 
 type AllowedSignerEntry struct {
@@ -264,25 +269,48 @@ func parseOptions(options []string) (isCA bool, namespaces []string, validAfter 
 	return
 }
 
-// ParseAllowedSigners parses an allowed_signers file.
-func ParseAllowedSigners(b []byte) (AllowedSigners, error) {
-	keyMap := make(map[string]AllowedSignerEntry)
+type authorizedKey struct {
+	PubKey  ssh.PublicKey
+	Comment string
+	Options []string
+}
+
+func ParseAuthorizedKeys(b []byte) ([]authorizedKey, error) {
+	var keys []authorizedKey
 	for len(b) > 0 {
-		principals, options, pubkey, comment, rest, err := ParseAllowedSigner(b)
+		pubKey, comment, options, rest, err := ssh.ParseAuthorizedKey(b)
 		if err != nil {
-			return AllowedSigners{}, fmt.Errorf("failed to parse allowed signer: %w", err)
+			return nil, err
+		}
+		keys = append(keys, authorizedKey{
+			PubKey:  pubKey,
+			Comment: comment,
+			Options: options, // TODO actually parse authorizedKeys options here (maybe map to ssh.Permissions?)
+		})
+		b = rest
+	}
+	return keys, nil
+}
+
+// ParseAllowedSigners parses an allowed_signers file.
+func GetTrust(allowedSigners, authorizedKeys, knownHosts []byte) (TrustChecker, error) {
+	keyMap := make(map[string]AllowedSignerEntry)
+	for len(allowedSigners) > 0 {
+		principals, options, pubkey, comment, rest, err := ParseAllowedSigner(allowedSigners)
+		if err != nil {
+			return TrustChecker{}, fmt.Errorf("failed to parse allowed signer: %w", err)
 		}
 		isCA, namespaces, validAfter, validBefore, err := parseOptions(options)
 		if err != nil {
-			return AllowedSigners{}, fmt.Errorf("failed to parse options: %w", err)
+			return TrustChecker{}, fmt.Errorf("failed to parse options: %w", err)
 		}
 		nameSpaceChecker, err := glob.GetListMatcher(namespaces)
 		if err != nil {
-			return AllowedSigners{}, fmt.Errorf("failed to create namespace matcher: %w", err)
+			return TrustChecker{}, fmt.Errorf("failed to create namespace matcher: %w", err)
 		}
 		principalChecker, err := glob.GetListMatcher(principals)
 		if err != nil {
-			return AllowedSigners{}, fmt.Errorf("failed to create principal matcher: %w", err)
+			return TrustChecker{}, fmt.Errorf("failed to create principal matcher: %w", err)
 		}
 		keyMap[string(pubkey.Marshal())] = AllowedSignerEntry{
 			Principals:       principals,
@@ -294,21 +322,53 @@ func ParseAllowedSigners(b []byte) (AllowedSigners, error) {
 			ValidAfter:       validAfter,
 			ValidBefore:      validBefore,
 		}
-		b = rest
+		allowedSigners = rest
 	}
-	allowedSigner := AllowedSigners{
-		Entries: keyMap,
+	keys, err := ParseAuthorizedKeys(authorizedKeys)
+	if err != nil {
+		return TrustChecker{}, err
+	}
+	authorizedKeysMap := make(map[string]authorizedKey)
+	for key := range keys {
+		authorizedKeysMap[string(keys[key].PubKey.Marshal())] = keys[key]
+	}
+	trust := TrustChecker{
+		AuthorizedKeys: authorizedKeysMap,
+		Entries:        keyMap,
 		CertChecker: ssh.CertChecker{
 			IsRevoked: func(cert *ssh.Certificate) bool {
 				// TODO handle revocations here
 				return false
 			},
+			IsUserAuthority: func(auth ssh.PublicKey) bool {
+				if _, ok := keyMap[string(auth.Marshal())]; ok {
+					return true
+				}
+				return false
+			},
+			IsHostAuthority: func(auth ssh.PublicKey, address string) bool {
+				if _, ok := keyMap[string(auth.Marshal())]; ok {
+					return true
+				}
+				return false
+			},
+			Clock: time.Now,
+			UserKeyFallback: func(conn ssh.ConnMetadata, key ssh.PublicKey) (*ssh.Permissions, error) {
+				// TODO parse authorized_keys file for this
+				// or allow generation of an authorized_keys pattern from the allowed_signers file
+				// allow to define principals and restrictions for them
+				return nil, errors.New("not implemented")
+			},
+			HostKeyFallback: func(hostname string, remote net.Addr, key ssh.PublicKey) error {
+				// TODO parse known_hosts file for this
+				return errors.New("not implemented")
+			},
 		},
 	}
-	return allowedSigner, nil
+	return trust, nil
 }
 
-func (a *AllowedSigners) VerifySignature(m io.Reader, sig *sshsig.Signature, hashAlgorithm sshsig.HashAlgorithm, principal, namespace string, atTime sql.NullTime) error {
+func (a *TrustChecker) VerifySignature(m io.Reader, sig *sshsig.Signature, hashAlgorithm sshsig.HashAlgorithm, principal, namespace string, atTime sql.NullTime) error {
 	var pubKey ssh.PublicKey
 	switch sig.PublicKey.(type) {
 	case *ssh.Certificate:
@@ -368,7 +428,7 @@ func (a *AllowedSigners) VerifySignature(m io.Reader, sig *sshsig.Signature, has
 	return nil
 }
 
-func (a *AllowedSigners) Render() ([]byte, error) {
+func (a *TrustChecker) Render() ([]byte, error) {
 	var buf bytes.Buffer
 	for marshalledKey, entry := range a.Entries {
 		key, err := ssh.ParsePublicKey([]byte(marshalledKey))
