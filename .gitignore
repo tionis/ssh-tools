@@ -1,2 +1,4 @@
 .idea
 ssh-tools
+*.db
+db.sqlite3*

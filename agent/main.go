@@ -140,8 +140,19 @@ func (a *Agent) Signers() ([]ssh.Signer, error) {
 	return signers, nil
 }
 
-func (a *Agent) SignWithFlags(_ ssh.PublicKey, _ []byte, _ agent.SignatureFlags) (*ssh.Signature, error) {
-	return nil, ErrOperationUnsupported
+func (a *Agent) SignWithFlags(pubKey ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
+	switch flags {
+	case 0:
+		return a.Sign(pubKey, data)
+	case agent.SignatureFlagRsaSha256:
+		// TODO ensure sha256 is used
+		return a.Sign(pubKey, data)
+	case agent.SignatureFlagRsaSha512:
+		// TODO ensure sha512 is used
+		return a.Sign(pubKey, data)
+	default:
+		return nil, ErrOperationUnsupported
+	}
 }
 
 type Message struct {
@@ -204,18 +215,8 @@ func (a *Agent) EncryptBytesForExtension(contents []byte) ([]byte, error) {
 
 func (a *Agent) Extension(extensionType string, contents []byte) ([]byte, error) {
 	switch extensionType {
-	case "decrypt":
-		return a.DecryptBytes(contents)
-	case "encrypt":
-		return a.EncryptBytesForExtension(contents)
-	case "add-encryption-key":
-		return a.AddEncryptionKey(contents)
-	case "remove-encryption-key":
-		return a.RemoveEncryptionKey(contents)
-	case "list-encryption-keys":
-		return a.ListEncryptionKeys(contents)
-	case "remove-all-encryption-keys":
-		return a.RemoveAllEncryptionKeys(contents)
+	//case "sigchain":
+	// TODO some sigchain management here
 	default:
 		return nil, ErrOperationUnsupported
 	}
@@ -233,8 +234,7 @@ func (a *Agent) Close() {
 	// If implementing yubikey support, close the device here
 }
 
-func getPubKeyFromEncryptionKey(key [32]byte) *[32]byte {
-	// TODO implement this
+func getPubKeyFromEncryptionKey(key [32]byte) (pubkey *[32]byte) {
 	return nil
 }
 
@@ -288,6 +288,9 @@ func ServeAgent(socketPath string) {
 		log.Println("Warning: ssh-tools agent is meant to run as a background daemon.")
 		log.Println("Running multiple instances is likely to lead to conflicts.")
 		log.Println("Consider using the launchd or systemd services.")
+		log.Printf("Starting ssh-tools agent at %s\n", socketPath)
+	} else {
+		log.Printf("Starting ssh-tools agent at %s\n", socketPath)
 	}
 
 	a := New()

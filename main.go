@@ -19,14 +19,15 @@ import (
 	sshToolsAgent "tasadar.net/tionis/ssh-tools/agent"
 	"tasadar.net/tionis/ssh-tools/allowed_signers"
 	"tasadar.net/tionis/ssh-tools/certs"
-	"tasadar.net/tionis/ssh-tools/manage"
+	"tasadar.net/tionis/ssh-tools/old_util"
+	"tasadar.net/tionis/ssh-tools/old_util/sftp_handler"
 	proxyClient "tasadar.net/tionis/ssh-tools/proxy/client"
 	proxyServer "tasadar.net/tionis/ssh-tools/proxy/server"
-	"tasadar.net/tionis/ssh-tools/util"
-	"tasadar.net/tionis/ssh-tools/util/sftp_handler"
+	"tasadar.net/tionis/ssh-tools/sigchain"
 	"time"
 )
 
+// TODO add continuous mode for instant authorized_keys updates
 // TODO add ssh subcommand
 // TODO implement management and automatic renewals using upstream ssh-tool server
 // (implement server in this repo for easier containment?)
@@ -35,11 +36,57 @@ import (
 // across git-tools, ssh-tools, shell-tools, etc
 // instant renewal over ssh-tools server and patch bay
 
+// TODO new cli interface:
+// ssh-tools
+//  agent
+//  cert
+//    sign (add options for gpg, ssh-agent, yubikey, all cert options, sigchain verification of correct CA, clipboard, etc)
+//    renew (add options for renew only if necessary, etc)
+//    verify (optionally integrate with sichain)
+//    info
+//    remote
+//      request (request cert renewal)
+//      approve (approve cert renewal(s))
+//  sigchain (wip interface, will probably change some things there)
+//    push (push newest sigchain to remote)
+//    pull (pull newest sigchain from remote and apply updates)
+//    new (add new sigchain entries to db)
+//    generate_allowed_signers
+//  internal
+//    json
+//      sign
+//      verify
+//  convert
+//    allowed_signers
+//      openssh_to_json
+//      json_to_openssh
+//  curl (copy important parts of curls flags to make ssh-signed http requests)
+//  proxy (wip: accept a config, then proxy http-sig signed http requests verified with sigchain and
+//              forward them (with added headers etc to the destination specified by config))
+//  old_util (some more utilities (e.g. completions, etc))
+
+// TODO implementation notes:
+// sigchain always saves a verified copy to allowed_signers (default ~/.ssh/allowed_signers)
+// working data is saved to ~/.ssh/sigchain.db
+// will probably
+
+// TODO
+// think about how to approach revocations
+// a cert can be revoked by signing it's own revocation or by a CA signing it's revocation
+// revocations are seperate from sigchain as they are temporary by nature (revocation entry can be
+// removed after the revocation is no longer valid) (what about past validation of signatures though!?!)
+
+// TODO:
+// fix cli parsing and write boilerplate
+// write sigchain stuff
+// build on top of that
+
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
 	var logger *slog.Logger
-	var fishCompletion string
+	var fishCompletion, manPage string
 	var allowedSigners allowed_signers.TrustChecker
+	var sigchainManager *sigchain.Manager
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
 		log.Println("failed to get home dir: ", err)
@@ -50,11 +97,10 @@ func main() {
 		EnableBashCompletion: true,
 		Flags: []cli.Flag{
 			&cli.PathFlag{
-				Name:      "allowed_signers",
-				Aliases:   []string{"s"},
-				Usage:     "sigchain file to use",
-				Value:     path.Join(homeDir, ".ssh", "allowed_signers"),
-				TakesFile: true,
+				Name:    "sigchain_db",
+				Aliases: []string{"sd"},
+				Usage:   "file to store sigchain data in",
+				Value:   path.Join(homeDir, ".ssh", "ssh-tools", "sigchain"),
 			},
 			&cli.StringFlag{
 				Name:    "log-level",
@@ -79,13 +125,22 @@ func main() {
 						AddSource: addSource,
 						Level:     logLevel,
 					}))
-			data, err := os.ReadFile(c.Path("allowed_signers"))
+			// TODO: generate allowed_signers from sigchain and save to file
+			db, err := sql.Open("sqlite", c.Path("sigchain_db"))
 			if err != nil {
-				return fmt.Errorf("failed to read allowed signers: %w", err)
+				return fmt.Errorf("failed to open sqlite db: %w", err)
 			}
-			allowedSigners, err = allowed_signers.GetTrust(data, []byte{}, []byte{})
+			chain, err = sigchain.Init(db)
 			if err != nil {
-				return fmt.Errorf("failed to parse allowed signers: %w", err)
+				return fmt.Errorf("failed to init sigchain: %w", err)
+			}
+			allowedSignersData, err := chain.GetAllowedSigners()
+			if err != nil {
+				return fmt.Errorf("failed to get allowed signers: %w", err)
+			}
+			allowedSigners, err = allowed_signers.GetTrust(allowedSignersData, []byte{}, []byte{})
+			if err != nil {
+				return fmt.Errorf("failed to parse allowed signers generated from sigchain: %w", err)
 			}
 			return nil
 		},
@@ -102,6 +157,7 @@ func main() {
 					},
 				},
 				Action: func(c *cli.Context) error {
+					// TODO support proxying to other agents
 					sshToolsAgent.ServeAgent(c.Path("socket"))
 					return nil
 				},
@@ -188,7 +244,7 @@ func main() {
 				},
 			},
 			{
-				Name:  "proxy",
+				Name:  "ws-proxy",
 				Usage: "commands for websocket proxy",
 				Subcommands: []*cli.Command{
 					{
@@ -207,11 +263,12 @@ func main() {
 							},
 						},
 						Action: func(c *cli.Context) error {
+							// TODO use sichain.db directly to generate authorized-keys from a list of principals
 							file, err := os.ReadFile(c.Path("authorized-keys"))
 							if err != nil {
 								return fmt.Errorf("failed to read authorized keys: %w", err)
 							}
-							keys, err := util.ParseAuthorizedKeys(file)
+							keys, err := old_util.ParseAuthorizedKeys(file)
 							if err != nil {
 								return err
 							}
@@ -235,9 +292,9 @@ func main() {
 						Action: func(c *cli.Context) error {
 							var signer ssh.Signer
 							if c.String("key") != "" {
-								signer, err = util.GetSignerFromFile(c.Path("key"))
+								signer, err = old_util.GetSignerFromFile(c.Path("key"))
 							} else {
-								signer, err = util.GetDefaultSigner()
+								signer, err = old_util.GetDefaultSigner()
 							}
 							if err != nil {
 								return fmt.Errorf("failed to get signer: %w", err)
@@ -253,7 +310,7 @@ func main() {
 			},
 			{
 				Name: "cert", // TODO: rework this to be more like ssh-keygen
-				// TODO: remove dep on yubikey specifics
+				// TODO: remove dep on yubikey specifics or replace with pure go go-piv fork
 				// TODO: install call out to an optional yubikey-agent thing
 				Aliases: []string{"c"},
 				Usage:   "certificate management",
@@ -645,39 +702,6 @@ func main() {
 						},
 					},
 					{
-						Name: "auto-renew",
-						Flags: []cli.Flag{
-							&cli.PathFlag{
-								Name:    "key",
-								Aliases: []string{"k"},
-								Usage:   "path to key to sign",
-								Value:   path.Join(homeDir, ".ssh", "id_ed25519.pub"),
-							},
-						},
-						Usage: "automatically request renewal of certificate when it has reached " +
-							"50% of its validity time window",
-						Action: func(c *cli.Context) error {
-							userManager := manage.NewUserManager(homeDir)
-							cert, err := certs.FromFile(c.Path("cert"))
-							if err != nil {
-								return fmt.Errorf("failed to read cert from file: %w", err)
-							}
-							if userManager.RenewalInProgress(cert) {
-								log.Println("a cert renewal is already requested, checkinf for reply")
-								return userManager.ProcessCertRenewal(cert)
-							}
-							now := uint64(time.Now().Unix())
-							timePassed := now - cert.Cert.ValidAfter
-							totalValidTime := cert.Cert.ValidBefore - cert.Cert.ValidAfter
-							if timePassed*100/totalValidTime > 50 {
-								log.Println("requesting cert renewal, run again to process answer")
-								return userManager.RequestCertRenewal(cert)
-							}
-							log.Println("not renewing cert")
-							return nil
-						},
-					},
-					{
 						Name: "self-revocation",
 						Subcommands: []*cli.Command{
 							{
@@ -788,78 +812,7 @@ func main() {
 				},
 			},
 			{
-				Name:    "manage",
-				Aliases: []string{"m"},
-				Usage:   "manage certificates across devices",
-				Subcommands: []*cli.Command{
-					{
-						Name:    "process",
-						Aliases: []string{"p"},
-						Flags: []cli.Flag{
-							&cli.BoolFlag{
-								Name:    "renew",
-								Aliases: []string{"r"},
-								Usage:   "only process renewals (automatically)",
-							},
-							&cli.BoolFlag{
-								Name:    "revoke",
-								Aliases: []string{"rv"},
-								Usage:   "only process revocations (automatically)",
-							},
-							&cli.BoolFlag{
-								Name:    "new",
-								Aliases: []string{"n"},
-								Usage:   "only process new requests, must be approved by admin interactively",
-							},
-						},
-						Usage: "process certificate signing requests",
-						Action: func(c *cli.Context) error {
-							caManager := manage.NewCAManager(homeDir)
-							return caManager.ProcessRequests(c.Bool("renew"), c.Bool("revoke"), c.Bool("new"))
-						},
-					},
-					{
-						Name:    "update-revocation-list",
-						Aliases: []string{"u"},
-						Usage:   "update the revocation list",
-						Action: func(c *cli.Context) error {
-							caManager := manage.NewCAManager(homeDir)
-							return caManager.UpdateRevocationList()
-						},
-					},
-					{
-						Name:    "revoke",
-						Aliases: []string{"rv"},
-						Flags: []cli.Flag{
-							&cli.PathFlag{
-								Name:    "cert",
-								Aliases: []string{"c"},
-								Usage:   "path to cert to revoke",
-							},
-						},
-						Usage: "revoke a certificate from stdin or file when given as $1",
-						Action: func(c *cli.Context) error {
-							var cert *certs.Cert
-							var err error
-							if c.Path("cert") != "" {
-								cert, err = certs.FromFile(c.Path("cert"))
-								if err != nil {
-									return fmt.Errorf("failed to read cert from file: %w", err)
-								}
-							} else {
-								cert, err = certs.FromStdin()
-								if err != nil {
-									return fmt.Errorf("failed to read cert from stdin: %w", err)
-								}
-							}
-							caManager := manage.NewCAManager(homeDir)
-							return caManager.RevokeCert(cert)
-						},
-					},
-				},
-			},
-			{
-				Name:    "util",
+				Name:    "old_util",
 				Aliases: []string{"u"},
 				Usage:   "utility functions",
 				Subcommands: []*cli.Command{
@@ -879,12 +832,24 @@ func main() {
 							},
 						},
 					},
+					{
+						Name:  "man",
+						Usage: "generate man page",
+						Action: func(c *cli.Context) error {
+							fmt.Println(manPage)
+							return nil
+						},
+					},
 				},
 			},
 		},
 	}
 
 	fishCompletion, err = app.ToFishCompletion()
+	if err != nil {
+		return
+	}
+	manPage, err = app.ToMan()
 	if err != nil {
 		return
 	}

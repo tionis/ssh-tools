@@ -11,8 +11,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"io"
 	"sync"
-	"tasadar.net/tionis/ssh-tools/util"
-	"tasadar.net/tionis/ssh-tools/util/prompt"
+	"tasadar.net/tionis/ssh-tools/old_util"
+	"tasadar.net/tionis/ssh-tools/old_util/prompt"
 	"time"
 )
 
@@ -76,7 +76,7 @@ func (k *Key) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
 			k.touchNotification.Stop()
 			return
 		}
-		util.ShowNotification("Waiting for YubiKey touch...")
+		old_util.ShowNotification("Waiting for YubiKey touch...")
 	}()
 	if err != nil {
 		return nil, err

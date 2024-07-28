@@ -84,6 +84,7 @@ func splitAtSpacesExceptInQuotes(in []byte) [][]byte {
 // This function is an addition to the golang.org/x/crypto/ssh package, which
 // does offer ssh.ParseAuthorizedKey and ssh.ParseKnownHosts, but not a parser
 // for allowed_signers files which has a slightly different format.
+// TODO check if this parses correctly in all cases
 func ParseAllowedSigner(in []byte) (principals []string, options []string, pubKey ssh.PublicKey, comment *string, rest []byte, err error) {
 	for len(in) > 0 {
 		end := bytes.IndexByte(in, '\n')
