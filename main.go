@@ -2,10 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"github.com/hiddeco/sshsig"
+	sshToolsAgent "github.com/tionis/ssh-tools/agent"
+	"github.com/tionis/ssh-tools/allowed_signers"
+	"github.com/tionis/ssh-tools/certs"
+	"github.com/tionis/ssh-tools/sigchain"
+	"github.com/tionis/ssh-tools/util/sftp_handler"
 	"github.com/urfave/cli/v2"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -14,16 +20,10 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"os/signal"
 	"path"
 	"strings"
-	sshToolsAgent "tasadar.net/tionis/ssh-tools/agent"
-	"tasadar.net/tionis/ssh-tools/allowed_signers"
-	"tasadar.net/tionis/ssh-tools/certs"
-	"tasadar.net/tionis/ssh-tools/old_util"
-	"tasadar.net/tionis/ssh-tools/old_util/sftp_handler"
-	proxyClient "tasadar.net/tionis/ssh-tools/proxy/client"
-	proxyServer "tasadar.net/tionis/ssh-tools/proxy/server"
-	"tasadar.net/tionis/ssh-tools/sigchain"
+	"syscall"
 	"time"
 )
 
@@ -83,6 +83,8 @@ import (
 
 func main() {
 	log.SetFlags(log.LstdFlags | log.Lshortfile)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 	var logger *slog.Logger
 	var fishCompletion, manPage string
 	var allowedSigners allowed_signers.TrustChecker
@@ -108,13 +110,21 @@ func main() {
 				Usage:   "log level to use",
 				Value:   "info",
 			},
+			&cli.BoolFlag{
+				Name:  "log-source",
+				Usage: "add source to log output",
+			},
 		},
 		Before: func(c *cli.Context) error {
 			logLevel, err := parseLogLevel(c.String("log-level"))
 			if err != nil {
 				return fmt.Errorf("failed to parse log level: %w", err)
 			}
-			addSource := false
+			addSource := c.Bool("log-source")
+			if os.Getenv("DEBUG") != "" {
+				addSource = true
+				logLevel = slog.LevelDebug
+			}
 			if logLevel == slog.LevelDebug {
 				addSource = true
 			}
@@ -125,40 +135,107 @@ func main() {
 						AddSource: addSource,
 						Level:     logLevel,
 					}))
-			// TODO: generate allowed_signers from sigchain and save to file
-			db, err := sql.Open("sqlite", c.Path("sigchain_db"))
-			if err != nil {
-				return fmt.Errorf("failed to open sqlite db: %w", err)
-			}
-			chain, err = sigchain.Init(db)
+			sigchainManager, err = sigchain.NewSigchainManager(ctx, c.Path("sigchain_db"), logger)
 			if err != nil {
 				return fmt.Errorf("failed to init sigchain: %w", err)
-			}
-			allowedSignersData, err := chain.GetAllowedSigners()
-			if err != nil {
-				return fmt.Errorf("failed to get allowed signers: %w", err)
-			}
-			allowedSigners, err = allowed_signers.GetTrust(allowedSignersData, []byte{}, []byte{})
-			if err != nil {
-				return fmt.Errorf("failed to parse allowed signers generated from sigchain: %w", err)
 			}
 			return nil
 		},
 		Commands: []*cli.Command{
 			{
-				Name: "agent",
+				Name: "sigchain",
+				Subcommands: []*cli.Command{
+					{
+						Name: "get",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "namespace",
+								Aliases: []string{"n"},
+								Usage:   "namespace to get sigchain for",
+							},
+							&cli.StringFlag{
+								Name:    "hash",
+								Aliases: []string{"h"},
+								Usage:   "hash to get sigchain entry for (overrides namespace)",
+							},
+						},
+						Action: func(c *cli.Context) error {
+							var rawSigchain []sigchain.Entry
+							if c.String("hash") != "" {
+								rawSigchain, err = sigchainManager.GetSigchainByHash(c.String("hash"))
+								if err != nil {
+									logger.Error("failed to get sigchain by hash", "error", err)
+									return fmt.Errorf("failed to get sigchain by hash: %w", err)
+								}
+							} else if c.String("namespace") != "" {
+								rawSigchain, err = sigchainManager.GetSigchainByNamespace(c.String("namespace"))
+								if err != nil {
+									logger.Error("failed to get sigchain by namespace", "error", err)
+									return fmt.Errorf("failed to get sigchain by namespace: %w", err)
+								}
+							} else {
+								return fmt.Errorf("namespace or hash is required")
+							}
+							var marshalledSigchain []sigchain.MarshalledEntry
+							for _, entry := range rawSigchain {
+								marshalledEntry, err := entry.Marshal()
+								if err != nil {
+									logger.Error("failed to marshal entry", "error", err)
+									return fmt.Errorf("failed to marshal entry: %w", err)
+								}
+								marshalledSigchain = append(marshalledSigchain, marshalledEntry)
+							}
+							encoded, err := json.Marshal(marshalledSigchain)
+							if err != nil {
+								logger.Error("failed to marshal sigchain", "error", err)
+								return fmt.Errorf("failed to marshal sigchain: %w", err)
+							}
+							fmt.Println(string(encoded))
+							return nil
+						},
+					},
+				},
+			},
+			{
+				Name: "agent", // TODO test this
 				Description: "ssh-tools agent server\n" +
 					"run as a background daemon to manage keys",
 				Flags: []cli.Flag{
 					&cli.PathFlag{
 						Name:  "socket",
-						Usage: "path to socket to use",
-						Value: getAgentSock(),
+						Usage: "path to socket to use (defaults to a temporary one)",
+					},
+					&cli.StringSliceFlag{
+						Name:    "sub-agents",
+						Aliases: []string{"sa"},
+						Usage: "sub-agents to proxy to\n" +
+							"format: <name>:<socket-path>",
 					},
 				},
 				Action: func(c *cli.Context) error {
-					// TODO support proxying to other agents
-					sshToolsAgent.ServeAgent(c.Path("socket"))
+					var socketPath string
+					if c.String(socketPath) == "" {
+						socketPath, err = getAgentSock()
+						if err != nil {
+							logger.Error("failed to get agent socket", "error", err)
+							return fmt.Errorf("failed to get agent socket: %w", err)
+						}
+					}
+					var subAgents []sshToolsAgent.SubAgent
+					for _, subAgent := range c.StringSlice("sub-agents") {
+						parts := strings.SplitN(subAgent, ":", 2)
+						conn, err := net.Dial("unix", parts[1])
+						if err != nil {
+							logger.Error("failed to connect to sub-agent", "error", err, "sub-agent", parts)
+							return fmt.Errorf("failed to connect to sub-agent: %w", err)
+						}
+						ag := agent.NewClient(conn)
+						subAgents = append(subAgents, sshToolsAgent.SubAgent{
+							Name:  parts[0],
+							Agent: ag,
+						})
+					}
+					sshToolsAgent.ServeAgent(c.Path("socket"), subAgents)
 					return nil
 				},
 			},
@@ -244,74 +321,7 @@ func main() {
 				},
 			},
 			{
-				Name:  "ws-proxy",
-				Usage: "commands for websocket proxy",
-				Subcommands: []*cli.Command{
-					{
-						Name:  "server",
-						Usage: "start a websocket proxy server",
-						Flags: []cli.Flag{
-							&cli.StringFlag{
-								Name:  "addr",
-								Usage: "address to listen on",
-								Value: "0.0.0.0:80",
-							},
-							&cli.StringFlag{
-								Name:  "authorized-keys",
-								Usage: "path to authorized keys file",
-								Value: path.Join(homeDir, ".ssh", "authorized_keys"),
-							},
-						},
-						Action: func(c *cli.Context) error {
-							// TODO use sichain.db directly to generate authorized-keys from a list of principals
-							file, err := os.ReadFile(c.Path("authorized-keys"))
-							if err != nil {
-								return fmt.Errorf("failed to read authorized keys: %w", err)
-							}
-							keys, err := old_util.ParseAuthorizedKeys(file)
-							if err != nil {
-								return err
-							}
-							server, err := proxyServer.New(logger, "", keys, c.String("addr"))
-							if err != nil {
-								return err
-							}
-							return server.Start()
-						},
-					},
-					{
-						Name: "client",
-						Usage: "start a websocket proxy client\n" +
-							"use as `ProxyCommand ssh-proxy \"base_url\" %h %p",
-						Flags: []cli.Flag{
-							&cli.StringFlag{
-								Name:  "key",
-								Usage: "path to key to use",
-							},
-						},
-						Action: func(c *cli.Context) error {
-							var signer ssh.Signer
-							if c.String("key") != "" {
-								signer, err = old_util.GetSignerFromFile(c.Path("key"))
-							} else {
-								signer, err = old_util.GetDefaultSigner()
-							}
-							if err != nil {
-								return fmt.Errorf("failed to get signer: %w", err)
-							}
-							client, err := proxyClient.New(logger, signer)
-							if err != nil {
-								return fmt.Errorf("failed to create client: %w", err)
-							}
-							return client.Connect(strings.Join(c.Args().Slice(), "/"))
-						},
-					},
-				},
-			},
-			{
-				Name: "cert", // TODO: rework this to be more like ssh-keygen
-				// TODO: remove dep on yubikey specifics or replace with pure go go-piv fork
-				// TODO: install call out to an optional yubikey-agent thing
+				Name:    "cert",
 				Aliases: []string{"c"},
 				Usage:   "certificate management",
 				Subcommands: []*cli.Command{
@@ -812,7 +822,7 @@ func main() {
 				},
 			},
 			{
-				Name:    "old_util",
+				Name:    "util",
 				Aliases: []string{"u"},
 				Usage:   "utility functions",
 				Subcommands: []*cli.Command{
@@ -860,7 +870,7 @@ func main() {
 }
 
 func parseLogLevel(logLevel string) (slog.Level, error) {
-	switch logLevel {
+	switch strings.ToLower(logLevel) {
 	case "debug":
 		return slog.LevelDebug, nil
 	case "info":
@@ -980,17 +990,17 @@ func cliFlagsToSigningConfig(c *cli.Context) (certs.SigningConfig, error) {
 		c.Bool("ignore-expiry"))
 }
 
-func getAgentSock() string {
+func getAgentSock() (string, error) {
 	agentSock := os.Getenv("SSH_AUTH_SOCK")
 	if agentSock == "" {
 		globalTmpDir := os.TempDir()
 		tmpDir, err := os.MkdirTemp(globalTmpDir, "ssh-tools-agent.*")
 		if err != nil {
-			return path.Join(globalTmpDir, "ssh-tools-agent.sock")
+			return "", fmt.Errorf("failed to create temp dir: %w", err)
 		}
-		return path.Join(tmpDir, "ssh-tools-agent.sock")
+		return path.Join(tmpDir, "ssh-tools-agent.sock"), nil
 	} else {
-		return agentSock
+		return agentSock, nil
 	}
 }
 

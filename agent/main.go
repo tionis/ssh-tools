@@ -32,6 +32,12 @@ type Key struct {
 	constrains       []agent.ConstraintExtension
 }
 
+// SubAgent represents an external ssh-agent that request can be sent to (to be used for the agent proxy function)
+type SubAgent struct {
+	Agent agent.Agent
+	Name  string
+}
+
 type Agent struct {
 	keys           map[string]*Key
 	password       sql.NullString
@@ -283,7 +289,8 @@ func New() *Agent {
 	}
 }
 
-func ServeAgent(socketPath string) {
+func ServeAgent(socketPath string, subAgents []SubAgent) {
+	// TODO use subAgents to proxy as needed
 	if terminal.IsTerminal(int(os.Stdin.Fd())) {
 		log.Println("Warning: ssh-tools agent is meant to run as a background daemon.")
 		log.Println("Running multiple instances is likely to lead to conflicts.")

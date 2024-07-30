@@ -7,7 +7,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"log"
 	"os"
-	"tasadar.net/tionis/ssh-tools/yubikey"
+	"github.com/tionis/ssh-tools/yubikey"
 	"time"
 )
 

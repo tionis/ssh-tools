@@ -11,7 +11,7 @@ import (
 	"io"
 	"net"
 	"strings"
-	"tasadar.net/tionis/ssh-tools/allowed_signers/glob"
+	"github.com/tionis/ssh-tools/allowed_signers/glob"
 	"time"
 )
 

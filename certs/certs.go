@@ -10,7 +10,7 @@ import (
 	"os"
 	"os/user"
 	"reflect"
-	"tasadar.net/tionis/ssh-tools/old_util"
+	"github.com/tionis/ssh-tools/old_util"
 	"time"
 )
 

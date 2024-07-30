@@ -8,11 +8,11 @@ import (
 	"errors"
 	"fmt"
 	"github.com/go-piv/piv-go/piv"
+	"github.com/tionis/ssh-tools/old_util"
+	"github.com/tionis/ssh-tools/util/prompt"
 	"golang.org/x/crypto/ssh"
 	"io"
 	"sync"
-	"tasadar.net/tionis/ssh-tools/old_util"
-	"tasadar.net/tionis/ssh-tools/old_util/prompt"
 	"time"
 )
 

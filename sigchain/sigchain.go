@@ -5,13 +5,15 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"filippo.io/age"
 	"fmt"
-	"tasadar.net/tionis/ssh-tools/util"
+	"github.com/tionis/ssh-tools/util"
 )
 
 type Entry struct {
 	Hash           string
 	AllowedSigners []util.AllowedSigner
+	EncryptionKeys []age.Identity
 	ParentHash     *string
 	Signature      *string
 }
@@ -23,6 +25,7 @@ type MarshalledEntryNoSig struct {
 
 type MarshalledEntry struct {
 	AllowedSigners []util.MarshalledAllowedSigner `json:"allowed_signers"`
+	EncryptionKeys []age.Identity                 `json:"encryption_keys"`
 	ParentHash     *string                        `json:"parent_hash"`
 	Signature      *string                        `json:"signature"`
 }
