@@ -18,11 +18,11 @@ var migrations = []string{
 	`CREATE TABLE sigchain_entries (
   hash TEXT PRIMARY KEY,
   data TEXT NOT NULL,
-  validated BOOLEAN DEFAULT FALSE NOT NULL,
+  validated INTEGER DEFAULT FALSE NOT NULL,
   created_at INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,
   CHECK(json_valid(data, 6))
 ) STRICT;
-CREATE INDEX sigchain_entries_parent_hash ON sigchain_entries((data->>'$parent_hash$'));
+CREATE INDEX sigchain_entries_parent_hash ON sigchain_entries((data->>'$.parent_hash'));
 CREATE TABLE trust_anchors (
   namespace TEXT NOT NULL,
   timestamp INTEGER DEFAULT (strftime('%s', 'now')) NOT NULL,

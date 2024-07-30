@@ -153,6 +153,64 @@ func (m *Manager) ApplySigchain(rawSigchain []byte) (updatedAnchors []string, er
 	return nameSpaceList, nil
 }
 
+func (m *Manager) GetSigchainByHash(hash string) ([]Entry, error) {
+	result, err := m.db.QueryContext(m.ctx,
+		`WITH RECURSIVE entry_parent AS (
+	SELECT e.hash, e.data, e.validated, e.created_at
+	FROM sigchain_entries e
+	WHERE e.hash = '?'
+	UNION ALL
+	SELECT e.hash, e.data, e.validated, e.created_at
+	FROM sigchain_entries e
+	JOIN entry_parent ep ON e.hash = ep.data->>'$.parent_hash'
+)
+SELECT hash FROM entry_parent;`, hash)
+	if err != nil {
+		return nil, fmt.Errorf("could not get sigchain by hash: %w", err)
+	}
+	var entries []Entry
+	for result.Next() {
+		var hash, data string
+		err = result.Scan(&hash, &data)
+		if err != nil {
+			return nil, fmt.Errorf("could not scan entry: %w", err)
+		}
+		var marshalledEntry MarshalledEntry
+		err = json.Unmarshal([]byte(data), &marshalledEntry)
+		if err != nil {
+			return nil, fmt.Errorf("could not unmarshal entry: %w", err)
+		}
+		var entry Entry
+		entry, err = marshalledEntry.Unmarshal()
+		if err != nil {
+			return nil, fmt.Errorf("could not unmarshal entry: %w", err)
+		}
+		entries = append(entries, entry)
+
+	}
+	return entries, nil
+}
+
+func (m *Manager) GetSigchainByNamespace(namespace string) ([]Entry, error) {
+	var hash string
+	err := m.db.QueryRowContext(
+		m.ctx,
+		"SELECT hash FROM trust_anchors WHERE namespace = ? ORDER BY timestamp DESC LIMIT 1;",
+		namespace).Scan(&hash)
+	if err != nil {
+		return nil, fmt.Errorf("could not get trust anchor: %w", err)
+	}
+	return m.GetSigchainByHash(hash)
+}
+
+// TODO add functions to append to sigchain
+// - append to sigchain (use ssh-agent for signing operation (ensure only a key allowed by the current sigchain setup is used))
+func (m *Manager) AppendToSigchain(newEntry Entry) error {
+	// if signature is empty sign with a valid key from ssh-agent
+	// if hash is empty calculate it
+	return errors.New("not implemented")
+}
+
 func (m *Manager) getOwnSigchain() (Entry, error) {
 	var ownNamespace string
 	err := m.db.QueryRowContext(m.ctx, "SELECT value FROM kv WHERE key = 'ownNamespace';").Scan(&ownNamespace)
