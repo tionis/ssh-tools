@@ -10,7 +10,7 @@ import (
 	"os"
 	"os/user"
 	"reflect"
-	"github.com/tionis/ssh-tools/old_util"
+	"github.com/tionis/ssh-tools/util"
 	"time"
 )
 
@@ -205,7 +205,7 @@ func (c *Cert) Verify(validKeys []ssh.PublicKey) error {
 }
 
 func (c *Cert) ApplyTimePattern(pattern string) error {
-	validAfter, validBefore, err := old_util.ParseTimePattern(pattern)
+	validAfter, validBefore, err := util.ParseTimePattern(pattern)
 	if err != nil {
 		return fmt.Errorf("failed to parse time pattern: %w", err)
 	}

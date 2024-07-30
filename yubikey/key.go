@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/go-piv/piv-go/piv"
-	"github.com/tionis/ssh-tools/old_util"
+	"github.com/tionis/ssh-tools/util"
 	"github.com/tionis/ssh-tools/util/prompt"
 	"golang.org/x/crypto/ssh"
 	"io"
@@ -76,7 +76,7 @@ func (k *Key) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
 			k.touchNotification.Stop()
 			return
 		}
-		old_util.ShowNotification("Waiting for YubiKey touch...")
+		util.ShowNotification("Waiting for YubiKey touch...")
 	}()
 	if err != nil {
 		return nil, err

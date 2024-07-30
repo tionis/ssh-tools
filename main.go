@@ -63,7 +63,7 @@ import (
 //  curl (copy important parts of curls flags to make ssh-signed http requests)
 //  proxy (wip: accept a config, then proxy http-sig signed http requests verified with sigchain and
 //              forward them (with added headers etc to the destination specified by config))
-//  old_util (some more utilities (e.g. completions, etc))
+//  util (some more utilities (e.g. completions, etc))
 
 // TODO implementation notes:
 // sigchain always saves a verified copy to allowed_signers (default ~/.ssh/allowed_signers)
