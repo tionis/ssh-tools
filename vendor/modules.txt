@@ -4,37 +4,26 @@ filippo.io/age
 filippo.io/age/internal/bech32
 filippo.io/age/internal/format
 filippo.io/age/internal/stream
-# github.com/alexbrainman/sspi v0.0.0-20180613141037-e580b900e9f5
-## explicit
-# github.com/aus/proxyplease v0.1.0
-## explicit; go 1.12
 # github.com/cpuguy83/go-md2man/v2 v2.0.4
 ## explicit; go 1.11
 github.com/cpuguy83/go-md2man/v2/md2man
-# github.com/git-lfs/go-ntlm v0.0.0-20190401175752-c5056e7fa066
-## explicit
-# github.com/go-fed/httpsig v1.1.0
-## explicit; go 1.13
 # github.com/go-piv/piv-go v1.11.0
 ## explicit; go 1.16
 github.com/go-piv/piv-go/piv
 github.com/go-piv/piv-go/third_party/rsa
-# github.com/gorilla/mux v1.8.0
-## explicit; go 1.12
-# github.com/gorilla/websocket v1.5.0
-## explicit; go 1.12
 # github.com/hiddeco/sshsig v0.1.0
 ## explicit; go 1.13
 github.com/hiddeco/sshsig
 # github.com/kr/fs v0.1.0
 ## explicit
 github.com/kr/fs
+# github.com/mattn/go-sqlite3 v1.14.22
+## explicit; go 1.19
+github.com/mattn/go-sqlite3
 # github.com/pkg/sftp v1.13.6
 ## explicit; go 1.15
 github.com/pkg/sftp
 github.com/pkg/sftp/internal/encoding/ssh/filexfer
-# github.com/rapid7/go-get-proxied v0.0.0-20181210221417-16249a544090
-## explicit
 # github.com/russross/blackfriday/v2 v2.1.0
 ## explicit
 github.com/russross/blackfriday/v2
@@ -80,8 +69,6 @@ golang.org/x/crypto/ssh/agent
 golang.org/x/crypto/ssh/internal/bcrypt_pbkdf
 golang.org/x/crypto/ssh/knownhosts
 golang.org/x/crypto/ssh/terminal
-# golang.org/x/net v0.21.0
-## explicit; go 1.18
 # golang.org/x/sys v0.22.0
 ## explicit; go 1.18
 golang.org/x/sys/cpu
@@ -91,5 +78,3 @@ golang.org/x/sys/windows
 # golang.org/x/term v0.22.0
 ## explicit; go 1.18
 golang.org/x/term
-# h12.io/socks v1.0.1
-## explicit; go 1.9

@@ -102,7 +102,7 @@ func main() {
 				Name:    "sigchain_db",
 				Aliases: []string{"sd"},
 				Usage:   "file to store sigchain data in",
-				Value:   path.Join(homeDir, ".ssh", "ssh-tools", "sigchain"),
+				Value:   path.Join(homeDir, ".ssh", "sigchain.db"),
 			},
 			&cli.StringFlag{
 				Name:    "log-level",
@@ -142,6 +142,49 @@ func main() {
 			return nil
 		},
 		Commands: []*cli.Command{
+			{
+				Name: "signature",
+				Subcommands: []*cli.Command{
+					{
+						Name: "parse",
+						Flags: []cli.Flag{
+							&cli.StringFlag{
+								Name:    "signature",
+								Aliases: []string{"s"},
+								Usage:   "signature to parse, stdin if '-'",
+							},
+						},
+						Action: func(c *cli.Context) error {
+							var signature []byte
+							if c.String("signature") == "-" {
+								signature, err = io.ReadAll(os.Stdin)
+								if err != nil {
+									logger.Error("failed to read signature from stdin", "error", err)
+									return fmt.Errorf("failed to read signature from stdin: %w", err)
+								}
+							} else {
+								signature, err = os.ReadFile(c.String("signature"))
+								if err != nil {
+									logger.Error("failed to read signature", "error", err)
+									return fmt.Errorf("failed to read signature: %w", err)
+								}
+							}
+							sig, err := sshsig.Unarmor(signature)
+							if err != nil {
+								logger.Error("failed to parse signature", "error", err)
+								return fmt.Errorf("failed to parse signature: %w", err)
+							}
+							encoded, err := json.Marshal(sig)
+							if err != nil {
+								logger.Error("failed to marshal signature", "error", err)
+								return fmt.Errorf("failed to marshal signature: %w", err)
+							}
+							fmt.Println(string(encoded))
+							return nil
+						},
+					},
+				},
+			},
 			{
 				Name: "sigchain",
 				Subcommands: []*cli.Command{

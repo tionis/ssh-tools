@@ -61,15 +61,15 @@ func ParseSFTPRemote(signingConf certs.SigningConfig, homeDir, remote, defaultPa
 		//	net.JoinHostPort(parse.Hostname(), port)),
 		BannerCallback: ssh.BannerDisplayStderr(),
 	}
-	path := strings.TrimPrefix(parse.Path, "/")
-	if path == "" {
-		path = defaultPath
+	sftpPath := strings.TrimPrefix(parse.Path, "/")
+	if sftpPath == "" {
+		sftpPath = defaultPath
 	}
 	return &SFTPRemote{
 		SSHConfig: sshConfig,
 		Host:      parse.Hostname(),
 		Port:      port,
-		Path:      path,
+		Path:      sftpPath,
 	}, nil
 }
 
