@@ -9,7 +9,7 @@ require (
 	github.com/pkg/sftp v1.13.6
 	github.com/skeema/knownhosts v1.3.0
 	github.com/twpayne/go-pinentry-minimal v0.0.0-20220113210447-2a5dc4396c2a
-	github.com/urfave/cli/v2 v2.27.3
+	github.com/urfave/cli/v2 v2.27.4
 	github.com/vmihailenco/msgpack/v5 v5.4.1
 	golang.org/x/crypto v0.25.0
 )
