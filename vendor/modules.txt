@@ -4,7 +4,7 @@ filippo.io/age
 filippo.io/age/internal/bech32
 filippo.io/age/internal/format
 filippo.io/age/internal/stream
-# github.com/cpuguy83/go-md2man/v2 v2.0.4
+# github.com/cpuguy83/go-md2man/v2 v2.0.5
 ## explicit; go 1.11
 github.com/cpuguy83/go-md2man/v2/md2man
 # github.com/go-piv/piv-go v1.11.0
@@ -33,7 +33,7 @@ github.com/skeema/knownhosts
 # github.com/twpayne/go-pinentry-minimal v0.0.0-20220113210447-2a5dc4396c2a
 ## explicit; go 1.17
 github.com/twpayne/go-pinentry-minimal/pinentry
-# github.com/urfave/cli/v2 v2.27.3
+# github.com/urfave/cli/v2 v2.27.5
 ## explicit; go 1.18
 github.com/urfave/cli/v2
 # github.com/vmihailenco/msgpack/v5 v5.4.1
