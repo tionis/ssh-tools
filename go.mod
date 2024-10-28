@@ -7,7 +7,7 @@ require (
 	github.com/go-piv/piv-go v1.11.0
 	github.com/hiddeco/sshsig v0.1.0
 	github.com/mattn/go-sqlite3 v1.14.22
-	github.com/pkg/sftp v1.13.6
+	github.com/pkg/sftp v1.13.7
 	github.com/skeema/knownhosts v1.3.0
 	github.com/twpayne/go-pinentry-minimal v0.0.0-20220113210447-2a5dc4396c2a
 	github.com/urfave/cli/v2 v2.27.3
